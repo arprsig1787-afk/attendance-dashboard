@@ -104,7 +104,7 @@ def detect_column(df, keywords):
 # =========================================================
 # 📂 UPLOAD SECTION
 # =========================================================
-st.markdown("## 📂 Upload Data (Chapter Inputs)")
+st.markdown("## 📂 Upload to Start Your Story")
 
 col1, col2 = st.columns(2)
 
@@ -112,7 +112,7 @@ with col1:
     att_file = st.file_uploader("Attendance File", type=["xlsx"])
 
 with col2:
-    note_file = st.file_uploader("Notes File", type=["xlsx"])
+    note_file = st.file_uploader("Engagements Notes File", type=["xlsx"])
 
 
 # =========================================================
