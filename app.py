@@ -1,187 +1,130 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import re
-
-st.set_page_config(page_title="Attendance Intelligence Engine", layout="wide")
-st.title("📊 Attendance Intelligence Engine (Barrier Impact Model)")
-
-
 # =========================================================
-# SAFE DATA HANDLING (prevents Streamlit crashes)
+# 🔥 PREDICTIVE ATTENDANCE RISK ENGINE
 # =========================================================
-def safe_ui(df):
-    df = df.copy()
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.fillna("")
-    return df.astype(str)
 
+st.header("🔥 Predictive Attendance Risk Engine")
 
-def force_unique_columns(df):
-    cols = {}
-    new_cols = []
+if "attendance_visits" in locals() and len(attendance_visits) > 0:
 
-    for c in df.columns:
-        c = str(c).strip().lower()
-        if c not in cols:
-            cols[c] = 0
-            new_cols.append(c)
-        else:
-            cols[c] += 1
-            new_cols.append(f"{c}_{cols[c]}")
-
-    df.columns = new_cols
-    return df
-
-
-def fix_headers(df):
-    for i in range(min(10, len(df))):
-        row = df.iloc[i].astype(str).str.lower()
-        if any("student" in x for x in row) or any("note" in x for x in row):
-            df.columns = df.iloc[i]
-            df = df[i+1:]
-            return df.reset_index(drop=True)
-    return df
-
-
-def extract_id(x):
-    if pd.isna(x):
-        return ""
-    match = re.search(r"\d+", str(x))
-    return match.group(0) if match else str(x).strip()
-
-
-# =========================================================
-# FILE UPLOAD
-# =========================================================
-att_file = st.file_uploader("Upload Attendance File", type=["xlsx"])
-note_file = st.file_uploader("Upload Notes File", type=["xlsx"])
-
-
-# =========================================================
-# MAIN PIPELINE
-# =========================================================
-if att_file and note_file:
-
-    attendance = pd.read_excel(att_file, header=None)
-    notes = pd.read_excel(note_file, header=None)
-
-    attendance = force_unique_columns(fix_headers(attendance))
-    notes = force_unique_columns(fix_headers(notes))
-
-    attendance = attendance.replace([np.inf, -np.inf], np.nan).fillna("")
-    notes = notes.replace([np.inf, -np.inf], np.nan).fillna("")
-
-    # ---------------------------
-    # ID DETECTION
-    # ---------------------------
-    att_id = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c][0]
-    note_id = [c for c in notes.columns if "name" in c or "student" in c or "id" in c][0]
-
-    attendance["student_id"] = attendance[att_id].apply(extract_id)
-    notes["student_id"] = notes[note_id].apply(extract_id)
-
-    # ---------------------------
-    # NOTES COLUMN DETECTION
-    # ---------------------------
-    note_col = [c for c in notes.columns if "note" in c]
-
-    if not note_col:
-        st.error("No notes column detected")
-        st.stop()
-
-    note_col = note_col[0]
-    notes["notes_text"] = notes[note_col].astype(str)
-
-    # ---------------------------
-    # VISIT FILTER (SMART)
-    # ---------------------------
-    visit_col = [c for c in notes.columns if "visit" in c]
-
-    if not visit_col:
-        st.error("No visit column detected")
-        st.stop()
-
-    visit_col = visit_col[0]
-
-    attendance_visits = notes[
-        notes[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
-    ].copy()
-
-    st.subheader("Attendance Visit Volume")
-    st.write(len(attendance_visits))
-
-    # =========================================================
-    # 🧠 BARRIER IMPACT SCORING ENGINE
-    # =========================================================
-
-    def classify_barrier(note):
-        n = str(note).lower()
-
-        if any(x in n for x in ["bus", "transport", "ride", "pickup", "drop off"]):
-            return "Transportation"
-
-        if any(x in n for x in ["voicemail", "no answer", "left message", "called"]):
-            return "Contact Attempted"
-
-        if any(x in n for x in ["family", "home", "housing", "guardian"]):
-            return "Family/Home"
-
-        if any(x in n for x in ["sick", "doctor", "medical", "ill"]):
-            return "Health"
-
-        if any(x in n for x in ["test", "nwea", "classwork", "assignment"]):
-            return "School/Academic"
-
-        return "Other"
-
-    attendance_visits["barrier"] = attendance_visits[note_col].apply(classify_barrier)
-
-    # =========================================================
-    # 📊 IMPACT SCORING (NEW VALUE ADD)
-    # =========================================================
-
-    impact_weights = {
-        "Transportation": 0.9,
-        "Contact Attempted": 0.7,
-        "Family/Home": 0.8,
-        "Health": 0.6,
-        "School/Academic": 0.5,
-        "Other": 0.3
-    }
-
-    attendance_visits["impact_score"] = attendance_visits["barrier"].map(impact_weights)
-
-    barrier_summary = attendance_visits.groupby("barrier").agg(
-        count=("barrier", "count"),
+    # -----------------------------
+    # 1. AGGREGATE STUDENT DATA
+    # -----------------------------
+    student_barriers = attendance_visits.groupby("student_id").agg(
+        barrier_count=("barrier", "count"),
         avg_impact=("impact_score", "mean")
     ).reset_index()
 
-    barrier_summary["total_weighted_impact"] = barrier_summary["count"] * barrier_summary["avg_impact"]
+    # Fill missing values
+    student_barriers["barrier_count"] = student_barriers["barrier_count"].fillna(0)
+    student_barriers["avg_impact"] = student_barriers["avg_impact"].fillna(0)
 
-    barrier_summary = barrier_summary.sort_values("total_weighted_impact", ascending=False)
+    # -----------------------------
+    # 2. ATTENDANCE SIGNAL
+    # -----------------------------
+    if "attendance_pct" in attendance.columns:
+        att_signal = attendance.groupby("student_id")["attendance_pct"].mean().reset_index()
+    else:
+        att_signal = pd.DataFrame({
+            "student_id": student_barriers["student_id"],
+            "attendance_pct": 0
+        })
 
-    st.header("📊 Barrier Impact Dashboard")
+    # -----------------------------
+    # 3. MERGE DATA
+    # -----------------------------
+    risk_df = pd.merge(student_barriers, att_signal, on="student_id", how="left")
 
-    st.dataframe(barrier_summary)
+    risk_df["attendance_pct"] = risk_df["attendance_pct"].fillna(0)
 
-    st.plotly_chart(px.bar(barrier_summary, x="barrier", y="total_weighted_impact"))
+    # -----------------------------
+    # 4. NORMALIZE COMPONENTS
+    # -----------------------------
+    # lower attendance = higher risk
+    risk_df["attendance_risk"] = 1 - (risk_df["attendance_pct"] / 100)
 
-    # =========================================================
-    # 🧍 STUDENT VIEW
-    # =========================================================
-    st.header("🧍 Student View")
+    # normalize barrier count
+    if risk_df["barrier_count"].max() > 0:
+        risk_df["barrier_risk"] = risk_df["barrier_count"] / risk_df["barrier_count"].max()
+    else:
+        risk_df["barrier_risk"] = 0
 
-    students = attendance["student_id"].unique()
+    # impact already 0–1
+    risk_df["impact_risk"] = risk_df["avg_impact"].fillna(0)
 
-    student = st.selectbox("Select Student", students)
+    # -----------------------------
+    # 5. FINAL RISK SCORE
+    # -----------------------------
+    risk_df["risk_score"] = (
+        (risk_df["attendance_risk"] * 0.5) +
+        (risk_df["barrier_risk"] * 0.3) +
+        (risk_df["impact_risk"] * 0.2)
+    ) * 100
 
-    st.subheader("Attendance Records")
-    st.dataframe(safe_ui(attendance[attendance["student_id"] == student]))
+    # -----------------------------
+    # 6. RISK LABELING
+    # -----------------------------
+    def risk_label(score):
+        if score >= 75:
+            return "Critical 🔴"
+        elif score >= 50:
+            return "High 🟠"
+        elif score >= 25:
+            return "Medium 🟡"
+        else:
+            return "Low 🟢"
 
-    st.subheader("Attendance Notes")
-    st.dataframe(safe_ui(attendance_visits[attendance_visits["student_id"] == student]))
+    risk_df["risk_level"] = risk_df["risk_score"].apply(risk_label)
+
+    # -----------------------------
+    # 7. PRIMARY DRIVER (EXPLANATION)
+    # -----------------------------
+    def driver(row):
+        if row["barrier_count"] == 0:
+            return "Low data / No barriers logged"
+
+        if row["avg_impact"] >= 0.8:
+            return "High-impact barrier (transportation/family)"
+
+        if row["attendance_pct"] < 80:
+            return "Chronic attendance decline"
+
+        return "Mixed attendance risk"
+
+    risk_df["primary_driver"] = risk_df.apply(driver, axis=1)
+
+    # -----------------------------
+    # 8. SORT & DISPLAY
+    # -----------------------------
+    risk_df = risk_df.sort_values("risk_score", ascending=False)
+
+    st.subheader("Student Risk Table")
+
+    st.dataframe(
+        risk_df[[
+            "student_id",
+            "attendance_pct",
+            "barrier_count",
+            "avg_impact",
+            "risk_score",
+            "risk_level",
+            "primary_driver"
+        ]]
+    )
+
+    # -----------------------------
+    # 9. VISUALIZATION
+    # -----------------------------
+    st.subheader("Risk Distribution")
+
+    st.plotly_chart(
+        px.histogram(risk_df, x="risk_score", nbins=20)
+    )
+
+    st.subheader("Top At-Risk Students")
+
+    st.dataframe(
+        risk_df[risk_df["risk_score"] >= 60].head(25)
+    )
 
 else:
-    st.info("Upload both files to begin")
+    st.warning("Risk engine requires attendance_visits data.")
