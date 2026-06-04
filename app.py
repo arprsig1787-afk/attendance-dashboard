@@ -6,9 +6,7 @@ import numpy as np
 import re
 
 st.set_page_config(page_title="Attendance Intelligence Dashboard", layout="wide")
-
-st.title("📊 Attendance Intelligence Dashboard (SIS-Resilient Journey System)")
-
+st.title("📊 Attendance Intelligence Dashboard (SIS-Resilient)")
 
 # ----------------------------
 # FILE UPLOAD
@@ -16,14 +14,12 @@ st.title("📊 Attendance Intelligence Dashboard (SIS-Resilient Journey System)"
 attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
 notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
 
-
 # ----------------------------
-# CLEAN COLUMNS (CRITICAL FIX)
+# CLEAN COLUMNS (FIX DUPLICATES CRASH)
 # ----------------------------
 def clean_columns(df):
     df.columns = df.columns.astype(str).str.strip().str.lower()
 
-    # force uniqueness (fixes Streamlit crash)
     new_cols = []
     seen = {}
 
@@ -40,7 +36,7 @@ def clean_columns(df):
 
 
 # ----------------------------
-# EXTRACT ID FROM MESSY TEXT
+# EXTRACT ID FROM MESSY STRINGS
 # ----------------------------
 def extract_id(text):
     if pd.isna(text):
@@ -50,7 +46,7 @@ def extract_id(text):
 
 
 # ----------------------------
-# BARREL NLP (RULE-BASED)
+# BARIER DETECTION (RULE-BASED NLP)
 # ----------------------------
 def detect_barrier(text):
     text = str(text).lower()
@@ -65,7 +61,7 @@ def detect_barrier(text):
         return "Behavior"
     if "work" in text or "job" in text:
         return "Work Conflict"
-    if "family" in text or "care" in text or "guardian" in text:
+    if "family" in text or "care" in text:
         return "Family Responsibility"
     if "sleep" in text or "tired" in text:
         return "Attendance Fatigue"
@@ -86,51 +82,68 @@ if attendance_file and notes_file:
     attendance = clean_columns(attendance)
     notes = clean_columns(notes)
 
-    st.subheader("Raw Data Preview (Cleaned)")
+    st.subheader("Raw Data Preview")
     st.dataframe(attendance.head())
     st.dataframe(notes.head())
 
     # ----------------------------
-    # AUTO-DETECT STUDENT ID (ATTENDANCE)
+    # AUTO DETECT STUDENT ID (ATTENDANCE)
     # ----------------------------
-    if "student_id" not in attendance.columns:
+    id_cols = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c]
 
-        possible_cols = [c for c in attendance.columns if "name" in c or "student" in c]
-
-        if len(possible_cols) == 0:
-            st.error("No student identifier column found in attendance file.")
-            st.stop()
-
-        attendance["student_id"] = attendance[possible_cols[0]].apply(extract_id)
-
-    # ----------------------------
-    # AUTO-DETECT STUDENT ID (NOTES)
-    # ----------------------------
-    if "student_id" not in notes.columns:
-
-        possible_cols = [c for c in notes.columns if "name" in c or "student" in c]
-
-        if len(possible_cols) == 0:
-            st.error("No student identifier column found in notes file.")
-            st.stop()
-
-        notes["student_id"] = notes[possible_cols[0]].apply(extract_id)
-
-    # ----------------------------
-    # FIND REQUIRED COLUMNS (ATTENDANCE)
-    # ----------------------------
-    week_col = [c for c in attendance.columns if "week" in c]
-    att_col = [c for c in attendance.columns if "att" in c or "%" in c]
-
-    if len(week_col) == 0 or len(att_col) == 0:
-        st.error("Could not detect week or attendance percentage columns.")
+    if len(id_cols) == 0:
+        st.error("No student identifier column found in attendance file.")
         st.stop()
 
-    attendance["week"] = attendance[week_col[0]]
-    attendance["attendance_pct"] = pd.to_numeric(attendance[att_col[0]], errors="coerce")
+    id_col = id_cols[0]
+    attendance["student_id"] = attendance[id_col].apply(extract_id)
 
     # ----------------------------
-    # ATTENDANCE TREND
+    # AUTO DETECT STUDENT ID (NOTES)
+    # ----------------------------
+    notes_id_cols = [c for c in notes.columns if "name" in c or "student" in c or "id" in c]
+
+    if len(notes_id_cols) == 0:
+        st.error("No student identifier column found in notes file.")
+        st.stop()
+
+    notes["student_id"] = notes[notes_id_cols[0]].apply(extract_id)
+
+    # ----------------------------
+    # DETECT ATTENDANCE STRUCTURE (WIDE OR LONG)
+    # ----------------------------
+    week_cols = [c for c in attendance.columns if "wk" in c or "week" in c]
+
+    if len(week_cols) > 0:
+
+        # WIDE FORMAT → convert to long
+        attendance_long = attendance.melt(
+            id_vars=[id_col, "student_id"],
+            value_vars=week_cols,
+            var_name="week",
+            value_name="attendance_pct"
+        )
+
+        attendance = attendance_long
+
+    else:
+        # FALLBACK SINGLE COLUMN FORMAT
+        pct_cols = [c for c in attendance.columns if "%" in c or "att" in c]
+
+        if len(pct_cols) == 0:
+            st.error("Could not detect attendance percentage columns.")
+            st.stop()
+
+        attendance["attendance_pct"] = pd.to_numeric(attendance[pct_cols[0]], errors="coerce")
+
+        if "week" not in attendance.columns:
+            attendance["week"] = 1
+
+    # CLEAN PERCENTAGES
+    attendance["attendance_pct"] = pd.to_numeric(attendance["attendance_pct"], errors="coerce")
+
+    # ----------------------------
+    # TREND
     # ----------------------------
     st.header("📈 Attendance Trend")
 
@@ -173,8 +186,7 @@ if attendance_file and notes_file:
         st.error("Notes file must contain a 'notes' column.")
         st.stop()
 
-    notes["notes"] = notes["notes"].astype(str)
-    notes["barrier_type"] = notes["notes"].apply(detect_barrier)
+    notes["barrier_type"] = notes["notes"].astype(str).apply(detect_barrier)
 
     barrier_counts = notes["barrier_type"].value_counts().reset_index()
     barrier_counts.columns = ["Barrier", "Count"]
@@ -201,13 +213,13 @@ if attendance_file and notes_file:
 
     st.write(f"""
     - Primary inferred barrier: **{top_barrier}**
-    - Attendance change over time: **{change:.2f}%**
-    - System successfully processes SIS-style messy data
-    - Notes are being converted into structured categories
+    - Attendance change: **{change:.2f}%**
+    - System successfully processes messy SIS exports
+    - Notes are converted into structured categories
     """)
 
     # ----------------------------
-    # STUDENT JOURNEY VIEW
+    # STUDENT VIEW
     # ----------------------------
     st.header("🧍 Student Journey View")
 
@@ -223,4 +235,4 @@ if attendance_file and notes_file:
     st.dataframe(notes[notes["student_id"] == student])
 
 else:
-    st.info("Upload BOTH Attendance and Notes Excel files to begin.")
+    st.info("Upload BOTH Attendance and Notes Excel files to begin analysis.")
