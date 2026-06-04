@@ -9,11 +9,11 @@ from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 
 st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
-st.title("📊 Attendance Intelligence System (Stable + Scoped NLP)")
+st.title("📊 Attendance Intelligence System (Smart Filter Version)")
 
 
 # =========================================================
-# SAFE UI RENDER
+# SAFE RENDER (prevents Streamlit JSON crashes)
 # =========================================================
 def safe_ui(df):
     df = df.copy()
@@ -23,7 +23,7 @@ def safe_ui(df):
 
 
 # =========================================================
-# FORCE UNIQUE COLUMNS
+# FORCE UNIQUE COLUMNS (fix Streamlit crash)
 # =========================================================
 def force_unique_columns(df):
     seen = {}
@@ -54,7 +54,7 @@ def clean_columns(df):
 
 
 # =========================================================
-# HEADER FIX
+# HEADER FIX (SIS exports)
 # =========================================================
 def fix_headers(df):
     for i in range(min(15, len(df))):
@@ -67,7 +67,7 @@ def fix_headers(df):
 
 
 # =========================================================
-# EXTRACT ID
+# EXTRACT ID (handles name + id combo)
 # =========================================================
 def extract_id(x):
     if pd.isna(x):
@@ -95,7 +95,7 @@ if attendance_file and notes_file:
     notes = pd.read_excel(notes_file, header=None)
 
     # -------------------------
-    # CLEAN STRUCTURE
+    # STRUCTURE CLEAN
     # -------------------------
     attendance = clean_columns(fix_headers(attendance))
     notes = clean_columns(fix_headers(notes))
@@ -143,20 +143,20 @@ if attendance_file and notes_file:
     attendance["week"] = 1
 
     # -------------------------
-    # CLEAN FINAL
+    # FINAL CLEAN
     # -------------------------
     attendance = attendance.replace([np.inf, -np.inf], np.nan).fillna("")
     notes = notes.replace([np.inf, -np.inf], np.nan).fillna("")
 
-    # -------------------------
+    # =========================================================
     # PREVIEW
-    # -------------------------
+    # =========================================================
     st.subheader("Cleaned Data Preview")
     st.dataframe(safe_ui(force_unique_columns(attendance.head())))
     st.dataframe(safe_ui(force_unique_columns(notes.head())))
 
     # =========================================================
-    # 📈 ATTENDANCE TREND
+    # 📈 TREND
     # =========================================================
     st.header("📈 Attendance Trend")
 
@@ -184,7 +184,7 @@ if attendance_file and notes_file:
         st.plotly_chart(px.line(x=list(range(len(forecast))), y=forecast))
 
     # =========================================================
-    # 📞 ATTENDANCE VISIT FILTER
+    # 📞 ATTENDANCE VISIT INTELLIGENCE (FIXED FILTER)
     # =========================================================
     st.header("📞 Attendance Visit Intelligence")
 
@@ -199,9 +199,16 @@ if attendance_file and notes_file:
         visit_col = visit_col[0]
         note_col = note_col[0]
 
+        # 🔥 FIXED: flexible matching instead of strict equality
         attendance_visits = notes_clean[
-            notes_clean[visit_col].astype(str).str.lower() == "attendance"
+            notes_clean[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
         ].copy()
+
+        st.write("Unique Visit Types Found:")
+        st.write(notes_clean[visit_col].astype(str).value_counts().head(15))
+
+        st.write("Filtered Attendance Visits Count:")
+        st.write(len(attendance_visits))
 
         def classify(note):
             note = str(note).lower()
@@ -231,20 +238,22 @@ if attendance_file and notes_file:
         st.plotly_chart(px.bar(counts, x="Category", y="Count"))
         st.dataframe(counts)
 
+        st.dataframe(safe_ui(attendance_visits.head(50)))
+
     else:
         st.warning("Visit Description or Notes columns not found.")
 
     # =========================================================
-    # 🧠 NLP (FIXED SCOPE VERSION YOU REQUESTED)
+    # 🧠 NLP (NOW ALWAYS WORKS WHEN DATA EXISTS)
     # =========================================================
-    st.header("🧠 Barrier Pattern Discovery (Attendance Only NLP)")
+    st.header("🧠 Barrier Pattern Discovery (Attendance NLP)")
 
-    if "attendance_visits" in locals():
+    if "attendance_visits" in locals() and len(attendance_visits) > 0:
 
         texts = attendance_visits[note_col].astype(str).tolist()
         texts = [t for t in texts if len(str(t).strip()) > 2]
 
-        if len(texts) > 5:
+        if len(texts) > 2:
 
             vectorizer = TfidfVectorizer(stop_words="english", max_features=200)
             X = vectorizer.fit_transform(texts)
@@ -267,13 +276,13 @@ if attendance_file and notes_file:
             attendance_visits["pattern"] = attendance_visits["cluster"].map(cluster_labels)
 
             summary = attendance_visits["pattern"].value_counts().reset_index()
-            summary.columns = ["Barrier Pattern", "Count"]
+            summary.columns = ["Pattern", "Count"]
 
-            st.plotly_chart(px.bar(summary, x="Barrier Pattern", y="Count"))
+            st.plotly_chart(px.bar(summary, x="Pattern", y="Count"))
             st.dataframe(summary)
 
         else:
-            st.warning("Not enough attendance-only notes for NLP.")
+            st.warning("Not enough text for NLP clustering.")
 
     # =========================================================
     # 🧍 STUDENT VIEW
