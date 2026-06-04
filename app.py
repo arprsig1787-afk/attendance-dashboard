@@ -9,11 +9,11 @@ from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 
 st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
-st.title("📊 Attendance Intelligence System (Stable Build)")
+st.title("📊 Attendance Intelligence System (Stable + Scoped NLP)")
 
 
 # =========================================================
-# SAFE UI RENDER (prevents Streamlit JSON crashes)
+# SAFE UI RENDER
 # =========================================================
 def safe_ui(df):
     df = df.copy()
@@ -23,7 +23,7 @@ def safe_ui(df):
 
 
 # =========================================================
-# FORCE UNIQUE COLUMNS (FIX DUPLICATE COLUMN CRASH)
+# FORCE UNIQUE COLUMNS
 # =========================================================
 def force_unique_columns(df):
     seen = {}
@@ -54,7 +54,7 @@ def clean_columns(df):
 
 
 # =========================================================
-# HEADER FIX (SIS EXPORTS)
+# HEADER FIX
 # =========================================================
 def fix_headers(df):
     for i in range(min(15, len(df))):
@@ -84,28 +84,28 @@ notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
 
 
 # =========================================================
-# MAIN PIPELINE (ORDER IS CRITICAL)
+# MAIN PIPELINE
 # =========================================================
 if attendance_file and notes_file:
 
-    # -----------------------------------------------------
-    # 1. LOAD
-    # -----------------------------------------------------
+    # -------------------------
+    # LOAD
+    # -------------------------
     attendance = pd.read_excel(attendance_file, header=None)
     notes = pd.read_excel(notes_file, header=None)
 
-    # -----------------------------------------------------
-    # 2. FIX STRUCTURE
-    # -----------------------------------------------------
+    # -------------------------
+    # CLEAN STRUCTURE
+    # -------------------------
     attendance = clean_columns(fix_headers(attendance))
     notes = clean_columns(fix_headers(notes))
 
     attendance = force_unique_columns(attendance)
     notes = force_unique_columns(notes)
 
-    # -----------------------------------------------------
-    # 3. DETECT ID COLUMNS
-    # -----------------------------------------------------
+    # -------------------------
+    # DETECT ID COLUMNS
+    # -------------------------
     att_id_col = [c for c in attendance.columns if "student" in c or "name" in c or "id" in c]
     note_id_col = [c for c in notes.columns if "student" in c or "name" in c or "id" in c]
 
@@ -119,9 +119,9 @@ if attendance_file and notes_file:
     attendance["student_id"] = attendance[att_id_col].apply(extract_id)
     notes["student_id"] = notes[note_id_col].apply(extract_id)
 
-    # -----------------------------------------------------
-    # 4. DETECT NOTES COLUMN
-    # -----------------------------------------------------
+    # -------------------------
+    # NOTES COLUMN
+    # -------------------------
     note_cols = [c for c in notes.columns if "note" in c]
 
     if not note_cols:
@@ -130,9 +130,9 @@ if attendance_file and notes_file:
 
     notes["notes_text"] = notes[note_cols[0]].astype(str)
 
-    # -----------------------------------------------------
-    # 5. ATTENDANCE COLUMN DETECTION
-    # -----------------------------------------------------
+    # -------------------------
+    # ATTENDANCE COLUMN
+    # -------------------------
     pct_cols = [c for c in attendance.columns if "att" in c or "%" in c]
 
     if pct_cols:
@@ -142,22 +142,22 @@ if attendance_file and notes_file:
 
     attendance["week"] = 1
 
-    # -----------------------------------------------------
-    # 6. SAFE CLEAN
-    # -----------------------------------------------------
+    # -------------------------
+    # CLEAN FINAL
+    # -------------------------
     attendance = attendance.replace([np.inf, -np.inf], np.nan).fillna("")
     notes = notes.replace([np.inf, -np.inf], np.nan).fillna("")
 
-    # -----------------------------------------------------
-    # 7. PREVIEW
-    # -----------------------------------------------------
+    # -------------------------
+    # PREVIEW
+    # -------------------------
     st.subheader("Cleaned Data Preview")
     st.dataframe(safe_ui(force_unique_columns(attendance.head())))
     st.dataframe(safe_ui(force_unique_columns(notes.head())))
 
-    # -----------------------------------------------------
-    # 8. ATTENDANCE TREND
-    # -----------------------------------------------------
+    # =========================================================
+    # 📈 ATTENDANCE TREND
+    # =========================================================
     st.header("📈 Attendance Trend")
 
     trend = attendance.copy()
@@ -168,9 +168,9 @@ if attendance_file and notes_file:
     if len(trend) > 0:
         st.plotly_chart(px.line(trend, x="week", y="attendance_pct"))
 
-    # -----------------------------------------------------
-    # 9. FORECAST
-    # -----------------------------------------------------
+    # =========================================================
+    # 🔮 FORECAST
+    # =========================================================
     if len(trend) > 1:
         trend["week_num"] = np.arange(len(trend))
 
@@ -183,9 +183,9 @@ if attendance_file and notes_file:
         st.subheader("Forecast")
         st.plotly_chart(px.line(x=list(range(len(forecast))), y=forecast))
 
-    # -----------------------------------------------------
-    # 10. ATTENDANCE VISITS FILTER (YOUR REQUEST)
-    # -----------------------------------------------------
+    # =========================================================
+    # 📞 ATTENDANCE VISIT FILTER
+    # =========================================================
     st.header("📞 Attendance Visit Intelligence")
 
     notes_clean = notes.copy()
@@ -203,9 +203,6 @@ if attendance_file and notes_file:
             notes_clean[visit_col].astype(str).str.lower() == "attendance"
         ].copy()
 
-        # -------------------------------------------------
-        # CONTACT INTELLIGENCE
-        # -------------------------------------------------
         def classify(note):
             note = str(note).lower()
 
@@ -228,57 +225,59 @@ if attendance_file and notes_file:
 
         attendance_visits["category"] = attendance_visits[note_col].apply(classify)
 
-        st.subheader("Contact Breakdown")
-
         counts = attendance_visits["category"].value_counts().reset_index()
         counts.columns = ["Category", "Count"]
 
         st.plotly_chart(px.bar(counts, x="Category", y="Count"))
         st.dataframe(counts)
 
-        st.subheader("Sample Records")
-        st.dataframe(safe_ui(attendance_visits.head(50)))
-
     else:
         st.warning("Visit Description or Notes columns not found.")
 
-    # -----------------------------------------------------
-    # 11. NLP CLUSTERING (GLOBAL NOTES INSIGHT)
-    # -----------------------------------------------------
-    st.header("🧠 Barrier Pattern Discovery (NLP)")
+    # =========================================================
+    # 🧠 NLP (FIXED SCOPE VERSION YOU REQUESTED)
+    # =========================================================
+    st.header("🧠 Barrier Pattern Discovery (Attendance Only NLP)")
 
-    texts = notes["notes_text"].astype(str).tolist()
+    if "attendance_visits" in locals():
 
-    if len(texts) > 5:
+        texts = attendance_visits[note_col].astype(str).tolist()
+        texts = [t for t in texts if len(str(t).strip()) > 2]
 
-        vectorizer = TfidfVectorizer(stop_words="english", max_features=200)
-        X = vectorizer.fit_transform(texts)
+        if len(texts) > 5:
 
-        k = min(5, len(texts))
-        model = KMeans(n_clusters=k, random_state=42, n_init=10)
-        clusters = model.fit_predict(X)
+            vectorizer = TfidfVectorizer(stop_words="english", max_features=200)
+            X = vectorizer.fit_transform(texts)
 
-        notes["cluster"] = clusters
+            k = min(5, len(texts))
+            model = KMeans(n_clusters=k, random_state=42, n_init=10)
+            clusters = model.fit_predict(X)
 
-        terms = vectorizer.get_feature_names_out()
+            attendance_visits["cluster"] = clusters
 
-        labels = {}
-        for i in range(k):
-            center = model.cluster_centers_[i]
-            top_words = [terms[j] for j in center.argsort()[-3:]]
-            labels[i] = " / ".join(top_words)
+            terms = vectorizer.get_feature_names_out()
 
-        notes["cluster_label"] = notes["cluster"].map(labels)
+            cluster_labels = {}
 
-        summary = notes["cluster_label"].value_counts().reset_index()
-        summary.columns = ["Pattern", "Count"]
+            for i in range(k):
+                center = model.cluster_centers_[i]
+                top_words = [terms[j] for j in center.argsort()[-3:]]
+                cluster_labels[i] = " / ".join(top_words)
 
-        st.plotly_chart(px.bar(summary, x="Pattern", y="Count"))
-        st.dataframe(summary)
+            attendance_visits["pattern"] = attendance_visits["cluster"].map(cluster_labels)
 
-    # -----------------------------------------------------
-    # 12. STUDENT VIEW
-    # -----------------------------------------------------
+            summary = attendance_visits["pattern"].value_counts().reset_index()
+            summary.columns = ["Barrier Pattern", "Count"]
+
+            st.plotly_chart(px.bar(summary, x="Barrier Pattern", y="Count"))
+            st.dataframe(summary)
+
+        else:
+            st.warning("Not enough attendance-only notes for NLP.")
+
+    # =========================================================
+    # 🧍 STUDENT VIEW
+    # =========================================================
     st.header("🧍 Student View")
 
     students = attendance["student_id"].astype(str)
