@@ -9,7 +9,7 @@ import re
 # =========================================================
 st.set_page_config(page_title="Data Story", layout="wide")
 
-st.title("📊 Attendance Intelligence System")
+st.title("📖 Attendance Intelligence System by Data Story")
 st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
 
 
