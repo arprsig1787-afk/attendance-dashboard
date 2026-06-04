@@ -6,7 +6,7 @@ import numpy as np
 import re
 
 st.set_page_config(page_title="Attendance Intelligence Dashboard", layout="wide")
-st.title("📊 Attendance Intelligence Dashboard (SIS-Resilient)")
+st.title("📊 Attendance Intelligence Dashboard (Self-Healing SIS Version)")
 
 # ----------------------------
 # FILE UPLOAD
@@ -14,8 +14,9 @@ st.title("📊 Attendance Intelligence Dashboard (SIS-Resilient)")
 attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
 notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
 
+
 # ----------------------------
-# CLEAN COLUMNS (FIX DUPLICATES CRASH)
+# CLEAN COLUMNS (FIX DUPLICATES + SPACES)
 # ----------------------------
 def clean_columns(df):
     df.columns = df.columns.astype(str).str.strip().str.lower()
@@ -46,7 +47,7 @@ def extract_id(text):
 
 
 # ----------------------------
-# BARIER DETECTION (RULE-BASED NLP)
+# SIMPLE NLP BARRIER DETECTION
 # ----------------------------
 def detect_barrier(text):
     text = str(text).lower()
@@ -74,7 +75,7 @@ def detect_barrier(text):
 # ----------------------------
 if attendance_file and notes_file:
 
-    # LOAD DATA
+    # LOAD
     attendance = pd.read_excel(attendance_file)
     notes = pd.read_excel(notes_file)
 
@@ -87,27 +88,39 @@ if attendance_file and notes_file:
     st.dataframe(notes.head())
 
     # ----------------------------
-    # AUTO DETECT STUDENT ID (ATTENDANCE)
+    # AUTO-DETECT STUDENT ID (ATTENDANCE)
     # ----------------------------
-    id_cols = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c]
+    id_cols_att = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c]
 
-    if len(id_cols) == 0:
+    if len(id_cols_att) == 0:
         st.error("No student identifier column found in attendance file.")
         st.stop()
 
-    id_col = id_cols[0]
-    attendance["student_id"] = attendance[id_col].apply(extract_id)
+    att_id_col = id_cols_att[0]
+    attendance["student_id"] = attendance[att_id_col].apply(extract_id)
 
     # ----------------------------
-    # AUTO DETECT STUDENT ID (NOTES)
+    # AUTO-DETECT STUDENT ID (NOTES)
     # ----------------------------
-    notes_id_cols = [c for c in notes.columns if "name" in c or "student" in c or "id" in c]
+    id_cols_notes = [c for c in notes.columns if "name" in c or "student" in c or "id" in c]
 
-    if len(notes_id_cols) == 0:
+    if len(id_cols_notes) == 0:
         st.error("No student identifier column found in notes file.")
         st.stop()
 
-    notes["student_id"] = notes[notes_id_cols[0]].apply(extract_id)
+    notes["student_id"] = notes[id_cols_notes[0]].apply(extract_id)
+
+    # ----------------------------
+    # FIND NOTES COLUMN FLEXIBLY (FIX FOR "Y1 Notes")
+    # ----------------------------
+    notes_candidates = [c for c in notes.columns if "note" in c]
+
+    if len(notes_candidates) == 0:
+        st.error(f"No Notes column found. Available columns: {notes.columns.tolist()}")
+        st.stop()
+
+    notes_col = notes_candidates[0]
+    notes["notes_text"] = notes[notes_col].astype(str)
 
     # ----------------------------
     # DETECT ATTENDANCE STRUCTURE (WIDE OR LONG)
@@ -115,23 +128,17 @@ if attendance_file and notes_file:
     week_cols = [c for c in attendance.columns if "wk" in c or "week" in c]
 
     if len(week_cols) > 0:
-
-        # WIDE FORMAT → convert to long
-        attendance_long = attendance.melt(
-            id_vars=[id_col, "student_id"],
+        attendance = attendance.melt(
+            id_vars=[att_id_col, "student_id"],
             value_vars=week_cols,
             var_name="week",
             value_name="attendance_pct"
         )
-
-        attendance = attendance_long
-
     else:
-        # FALLBACK SINGLE COLUMN FORMAT
         pct_cols = [c for c in attendance.columns if "%" in c or "att" in c]
 
         if len(pct_cols) == 0:
-            st.error("Could not detect attendance percentage columns.")
+            st.error("Could not detect attendance percentage column.")
             st.stop()
 
         attendance["attendance_pct"] = pd.to_numeric(attendance[pct_cols[0]], errors="coerce")
@@ -139,7 +146,6 @@ if attendance_file and notes_file:
         if "week" not in attendance.columns:
             attendance["week"] = 1
 
-    # CLEAN PERCENTAGES
     attendance["attendance_pct"] = pd.to_numeric(attendance["attendance_pct"], errors="coerce")
 
     # ----------------------------
@@ -182,11 +188,7 @@ if attendance_file and notes_file:
     # ----------------------------
     st.header("🚧 Barrier Extraction from Notes")
 
-    if "notes" not in notes.columns:
-        st.error("Notes file must contain a 'notes' column.")
-        st.stop()
-
-    notes["barrier_type"] = notes["notes"].astype(str).apply(detect_barrier)
+    notes["barrier_type"] = notes["notes_text"].apply(detect_barrier)
 
     barrier_counts = notes["barrier_type"].value_counts().reset_index()
     barrier_counts.columns = ["Barrier", "Count"]
@@ -214,8 +216,8 @@ if attendance_file and notes_file:
     st.write(f"""
     - Primary inferred barrier: **{top_barrier}**
     - Attendance change: **{change:.2f}%**
-    - System successfully processes messy SIS exports
-    - Notes are converted into structured categories
+    - System adapts to messy SIS exports (Y1 Notes supported)
+    - Notes are automatically categorized into intervention groups
     """)
 
     # ----------------------------
@@ -235,4 +237,4 @@ if attendance_file and notes_file:
     st.dataframe(notes[notes["student_id"] == student])
 
 else:
-    st.info("Upload BOTH Attendance and Notes Excel files to begin analysis.")
+    st.info("Upload BOTH Attendance and Notes Excel files to begin.")
