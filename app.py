@@ -14,7 +14,7 @@ st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
 
 
 # =========================================================
-# SAFE DATA HANDLING
+# SAFE UTILITIES
 # =========================================================
 def safe_df(df):
     df = df.copy()
@@ -40,61 +40,39 @@ def clean_columns(df):
 
 
 # =========================================================
-# 🧠 FIXED ID EXTRACTION (NO ZIP CODES / NO ADDRESS NOISE)
+# 🧠 SPLIT NAME + ID FROM SAME CELL (KEY FIX)
 # =========================================================
-def extract_id(val):
+def split_name_id(val):
     """
-    Robust student ID extraction:
-    - ignores ZIP codes (5-digit standalone numbers)
-    - ignores house numbers
-    - keeps real student IDs embedded in text
+    Handles:
+    - John Smith 12078
+    - 12078 - John Smith
+    - Smith, John (12078)
     """
 
     if pd.isna(val):
-        return ""
+        return "", ""
 
-    text = str(val)
+    text = str(val).strip()
 
-    nums = re.findall(r"\d+", text)
+    # extract ID candidates
+    ids = re.findall(r"\d{4,}", text)
 
-    if not nums:
-        return text.strip()
+    # remove ZIP codes
+    ids = [i for i in ids if len(i) != 5]
 
-    # remove ZIP codes (exact 5-digit standalone numbers)
-    nums = [n for n in nums if len(n) > 3 and len(n) != 5]
+    student_id = max(ids, key=len) if ids else ""
 
-    if not nums:
-        return ""
+    # clean name portion
+    name = re.sub(r"\d{4,}", "", text)
+    name = re.sub(r"[\(\)\-\|,:]", " ", name)
+    name = " ".join(name.split()).strip()
 
-    return max(nums, key=len)
-
-
-# =========================================================
-# CLEAN MIXED NAME + ID CELLS
-# =========================================================
-def clean_name_id_column(df, col):
-    def clean(x):
-        if pd.isna(x):
-            return ""
-
-        x = str(x)
-
-        ids = re.findall(r"\d{4,}", x)
-
-        # remove ZIP-like values
-        ids = [i for i in ids if len(i) != 5]
-
-        if not ids:
-            return x.strip()
-
-        return max(ids, key=len)
-
-    df[col] = df[col].apply(clean)
-    return df
+    return name, student_id
 
 
 # =========================================================
-# HEADER DETECTION (FIXED FOR SIS EXPORTS)
+# HEADER DETECTION
 # =========================================================
 def find_header_row(df):
     for i in range(min(15, len(df))):
@@ -165,28 +143,31 @@ if att_file and note_file:
     st.success(f"Notes header row: {note_header}")
 
     # =========================================================
-    # AUTO DETECT ID COLUMNS
+    # DETECT ID COLUMNS (RAW)
     # =========================================================
     att_id_col = detect_column(attendance, ["student", "name", "id"])
     note_id_col = detect_column(notes, ["student", "name", "id"])
 
-    # CLEAN MIXED NAME+ID CELLS FIRST
-    attendance = clean_name_id_column(attendance, att_id_col)
-    notes = clean_name_id_column(notes, note_id_col)
+    # =========================================================
+    # SPLIT NAME + ID (CORE FIX)
+    # =========================================================
+    attendance[["student_name", "student_id"]] = attendance[att_id_col].apply(
+        lambda x: pd.Series(split_name_id(x))
+    )
 
-    # APPLY FINAL IDS
-    attendance["student_id"] = attendance[att_id_col].apply(extract_id)
-    notes["student_id"] = notes[note_id_col].apply(extract_id)
+    notes[["student_name", "student_id"]] = notes[note_id_col].apply(
+        lambda x: pd.Series(split_name_id(x))
+    )
 
-    # REMOVE BAD IDS (CRITICAL FIX)
-    attendance = attendance[attendance["student_id"].str.len() > 3]
-    notes = notes[notes["student_id"].str.len() > 3]
+    # REMOVE BAD IDS
+    attendance = attendance[attendance["student_id"] != ""]
+    notes = notes[notes["student_id"] != ""]
 
     st.success(f"Attendance ID Column: {att_id_col}")
     st.success(f"Notes ID Column: {note_id_col}")
 
     # =========================================================
-    # DETECT NOTES + VISITS
+    # DETECT NOTES + VISIT COLUMNS
     # =========================================================
     note_col = detect_column(notes, ["note", "comment", "visit", "description"])
     visit_col = detect_column(notes, ["visit", "type", "description"])
@@ -196,7 +177,7 @@ if att_file and note_file:
         st.stop()
 
     # =========================================================
-    # DO NOT OVER-FILTER DATA (FIX FOR STUDENT LOSS ISSUE)
+    # FULL DATASET (NO OVER-FILTERING)
     # =========================================================
     attendance_visits = notes.copy()
 
@@ -257,7 +238,7 @@ if att_file and note_file:
 
     attendance_visits["impact"] = attendance_visits["barrier"].map(weights)
 
-    student_risk = attendance_visits.groupby("student_id").agg(
+    student_risk = attendance_visits.groupby(["student_id", "student_name"]).agg(
         barrier_count=("barrier", "count"),
         avg_impact=("impact", "mean")
     ).reset_index()
@@ -304,9 +285,15 @@ if att_file and note_file:
     # =========================================================
     st.header("🧍 Student Drilldown")
 
-    students = sorted(student_risk["student_id"].dropna().unique())
+    students = student_risk["student_id"].unique()
 
-    student = st.selectbox("Select Student", students)
+    student = st.selectbox("Select Student ID", students)
+
+    student_name = student_risk[
+        student_risk["student_id"] == student
+    ]["student_name"].iloc[0]
+
+    st.subheader(f"Student: {student_name} ({student})")
 
     col1, col2 = st.columns(2)
 
@@ -315,7 +302,7 @@ if att_file and note_file:
         st.dataframe(student_risk[student_risk["student_id"] == student])
 
     with col2:
-        st.subheader("All Notes")
+        st.subheader("Notes")
         st.dataframe(
             safe_df(attendance_visits[attendance_visits["student_id"] == student])
         )
