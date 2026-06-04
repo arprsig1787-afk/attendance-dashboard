@@ -11,8 +11,8 @@ st.set_page_config(page_title="Data Story", layout="wide")
 
 st.title("📖 Data Story")
 st.markdown("Narrative Analytics for Attendance & Intervention Insight")
-
 st.divider()
+
 
 # =========================================================
 # HELPERS
@@ -58,15 +58,10 @@ with col2:
 # =========================================================
 if att_file and note_file:
 
-    attendance = pd.read_excel(att_file)
-    notes = pd.read_excel(note_file)
+    attendance = clean_columns(pd.read_excel(att_file))
+    notes = clean_columns(pd.read_excel(note_file))
 
-    attendance = clean_columns(attendance)
-    notes = clean_columns(notes)
-
-    # -----------------------------------------------------
-    # FORCE ID EXTRACTION FROM FIRST COLUMN (SAFE METHOD)
-    # -----------------------------------------------------
+    # FORCE ID SOURCE
     attendance["raw_identity"] = attendance.iloc[:, 0]
     notes["raw_identity"] = notes.iloc[:, 0]
 
@@ -78,12 +73,18 @@ if att_file and note_file:
         lambda x: pd.Series(split_name_id(x))
     )
 
-    # clean
     attendance = attendance[attendance["student_id"] != ""]
     notes = notes[notes["student_id"] != ""]
 
     attendance["student_id"] = attendance["student_id"].astype(str)
     notes["student_id"] = notes["student_id"].astype(str)
+
+    # =====================================================
+    # 📖 CHAPTER 1: IDENTITY
+    # =====================================================
+    st.markdown("## 📖 Chapter 1: Identity Resolution")
+
+    st.dataframe(attendance[["student_name", "student_id"]].head())
 
     # =====================================================
     # NOTES COLUMN
@@ -96,8 +97,10 @@ if att_file and note_file:
         st.stop()
 
     # =====================================================
-    # BARRIER CLASSIFICATION
+    # CHAPTER 2: BARRIERS
     # =====================================================
+    st.markdown("## 📖 Chapter 2: Barrier Narrative")
+
     def classify(x):
         x = str(x).lower()
 
@@ -107,17 +110,31 @@ if att_file and note_file:
             return "Contact Attempted"
         if "home" in x or "family" in x:
             return "Family/Home"
-        if "sick" in x or "medical" in x:
+        if "sick" in x:
             return "Health"
-        if "test" in x or "nwea" in x:
+        if "nwea" in x or "test" in x:
             return "School"
         return "Other"
 
     notes["barrier"] = notes[note_col].apply(classify)
 
+    barrier_summary = notes["barrier"].value_counts().reset_index()
+    barrier_summary.columns = ["Barrier", "Count"]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📄 Page: Barrier Distribution")
+        st.plotly_chart(px.bar(barrier_summary, x="Barrier", y="Count"), use_container_width=True)
+
+    with col2:
+        st.dataframe(barrier_summary)
+
     # =====================================================
-    # RISK ENGINE
+    # CHAPTER 3: RISK ENGINE
     # =====================================================
+    st.markdown("## 📖 Chapter 3: Risk Narrative")
+
     weights = {
         "Transportation": 0.9,
         "Contact Attempted": 0.7,
@@ -142,7 +159,7 @@ if att_file and note_file:
     student_risk["risk_score"] = student_risk["norm"] * 40 + student_risk["avg_impact"] * 60
 
     # =====================================================
-    # 🔥 FIXED STUDENT DROPDOWN (NO MORE SINGLE-STUDENT BUG)
+    # FIXED DROPDOWN (ALL STUDENTS SHOW)
     # =====================================================
     student_risk["label"] = (
         student_risk["student_name"].fillna("Unknown")
@@ -159,18 +176,33 @@ if att_file and note_file:
 
     student_row = student_risk[student_risk["student_id"] == selected_id]
 
-    if student_row.empty:
-        st.warning("No matching student found")
-        st.stop()
+    # =====================================================
+    # CHAPTER 3 VISUALS
+    # =====================================================
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📄 Risk Distribution")
+        st.plotly_chart(px.histogram(student_risk, x="risk_score"), use_container_width=True)
+
+    with col2:
+        st.markdown("### 📄 Risk Table")
+        st.dataframe(student_risk)
 
     # =====================================================
-    # DISPLAY
+    # CHAPTER 4: STUDENT STORY
     # =====================================================
-    st.subheader("📊 Risk Profile")
-    st.dataframe(student_row)
+    st.markdown("## 📖 Chapter 4: Student Story")
 
-    st.subheader("📝 Notes")
-    st.dataframe(notes[notes["student_id"] == selected_id])
+    st.markdown(f"### Selected: {student_row['student_name'].iloc[0]}")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.dataframe(student_row)
+
+    with col2:
+        st.dataframe(notes[notes["student_id"] == selected_id])
 
 else:
-    st.info("Upload both files to begin")
+    st.info("Upload both files to begin Data Story")
