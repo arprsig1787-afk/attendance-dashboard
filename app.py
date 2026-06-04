@@ -5,12 +5,21 @@ import plotly.express as px
 import re
 
 # =========================================================
-# PAGE SETUP
+# 📖 PAGE CONFIG (DATA STORY BRAND)
 # =========================================================
 st.set_page_config(page_title="Data Story", layout="wide")
 
-st.title("📖 Attendance Intelligence System by Data Story")
-st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
+st.markdown(
+    """
+    <div style="text-align:center;">
+        <h1>📖 Data Story</h1>
+        <h4 style="color:gray;">Narrative Analytics for Attendance & Intervention Insight</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.divider()
 
 
 # =========================================================
@@ -29,7 +38,6 @@ def clean_columns(df):
 
     for c in df.columns:
         c = str(c).strip().lower()
-
         if c not in seen:
             seen[c] = 0
             cols.append(c)
@@ -42,30 +50,21 @@ def clean_columns(df):
 
 
 # =========================================================
-# 🧠 CORE FIX: SPLIT NAME + ID (ROBUST)
+# 🧠 SPLIT NAME + ID (CRITICAL FIX)
 # =========================================================
 def split_name_id(val):
-    """
-    Handles:
-    - John Smith 12078
-    - 12078 - John Smith
-    - Smith, John (12078)
-    """
-
     if pd.isna(val):
         return "", ""
 
     text = str(val)
 
-    # extract all numeric groups
     nums = re.findall(r"\d{4,}", text)
 
-    # remove year-like / zip-like values
+    # remove ZIP/year noise
     nums = [n for n in nums if n not in ["2025", "2026"] and len(n) != 5]
 
     student_id = max(nums, key=len) if nums else ""
 
-    # clean name
     name = re.sub(r"\d{4,}", "", text)
     name = re.sub(r"[\(\)\-\|,:]", " ", name)
     name = " ".join(name.split()).strip()
@@ -74,20 +73,18 @@ def split_name_id(val):
 
 
 # =========================================================
-# HEADER DETECTION (SIS SAFE)
+# HEADER DETECTION
 # =========================================================
 def find_header_row(df):
     for i in range(min(15, len(df))):
         row = df.iloc[i].astype(str).str.lower()
-
         if any("student" in x for x in row) or any("note" in x for x in row):
             return i
-
     return 0
 
 
 # =========================================================
-# COLUMN DETECTION (NOT USED FOR ID ANYMORE)
+# COLUMN DETECTION
 # =========================================================
 def detect_column(df, keywords):
     best_col = None
@@ -105,9 +102,9 @@ def detect_column(df, keywords):
 
 
 # =========================================================
-# UI
+# 📂 UPLOAD SECTION
 # =========================================================
-st.header("📂 Upload Data")
+st.markdown("## 📂 Upload Data (Chapter Inputs)")
 
 col1, col2 = st.columns(2)
 
@@ -123,9 +120,9 @@ with col2:
 # =========================================================
 if att_file and note_file:
 
-    # -------------------------
-    # LOAD RAW FILES
-    # -------------------------
+    # =====================================================
+    # LOAD FILES
+    # =====================================================
     raw_att = pd.read_excel(att_file, header=None)
     raw_notes = pd.read_excel(note_file, header=None)
 
@@ -141,18 +138,17 @@ if att_file and note_file:
     attendance = attendance.fillna("")
     notes = notes.fillna("")
 
-    st.success(f"Attendance header row: {att_header}")
-    st.success(f"Notes header row: {note_header}")
+    st.success(f"Attendance Header Row: {att_header}")
+    st.success(f"Notes Header Row: {note_header}")
 
-    # =========================================================
-    # 🔥 CRITICAL FIX: DO NOT USE DETECTED ID COLUMNS
-    # =========================================================
+    # =====================================================
+    # 📖 CHAPTER 1: IDENTITY RESOLUTION
+    # =====================================================
+    st.markdown("## 📖 Chapter 1: Identity Resolution")
 
-    # force a stable identity source (usually first column)
     attendance["raw_identity"] = attendance.iloc[:, 0]
     notes["raw_identity"] = notes.iloc[:, 0]
 
-    # split name + ID
     attendance[["student_name", "student_id"]] = attendance["raw_identity"].apply(
         lambda x: pd.Series(split_name_id(x))
     )
@@ -161,58 +157,40 @@ if att_file and note_file:
         lambda x: pd.Series(split_name_id(x))
     )
 
-    # remove bad IDs
     attendance = attendance[attendance["student_id"] != ""]
     notes = notes[notes["student_id"] != ""]
 
-    # final cleanup
-    attendance["student_id"] = attendance["student_id"].astype(str)
-    notes["student_id"] = notes["student_id"].astype(str)
+    st.markdown("### 📄 Page 1: Student Identity Cleaned")
+    st.dataframe(attendance[["student_name", "student_id"]].head())
 
-    # remove year contamination
-    attendance = attendance[~attendance["student_id"].isin(["2025", "2026"])]
-    notes = notes[~notes["student_id"].isin(["2025", "2026"])]
+    # =====================================================
+    # 📖 CHAPTER 2: BARRIER STORY
+    # =====================================================
+    st.markdown("## 📖 Chapter 2: Barrier Narrative")
 
-    st.success("Student identity extraction complete")
-
-    # =========================================================
-    # NOTES COLUMN DETECTION
-    # =========================================================
     note_col = detect_column(notes, ["note", "comment", "visit", "description"])
 
-    if not note_col:
-        st.error("Could not detect notes column")
-        st.stop()
-
-    # =========================================================
-    # BARRIER CLASSIFICATION
-    # =========================================================
     def classify(note):
         n = str(note).lower()
 
-        if any(x in n for x in ["bus", "transport", "ride", "pickup"]):
+        if any(x in n for x in ["bus", "transport", "ride"]):
             return "Transportation"
 
-        if any(x in n for x in ["voicemail", "no answer", "called", "left message"]):
+        if any(x in n for x in ["voicemail", "called", "left message"]):
             return "Contact Attempted"
 
         if any(x in n for x in ["family", "home", "housing"]):
             return "Family/Home"
 
-        if any(x in n for x in ["sick", "doctor", "medical"]):
+        if any(x in n for x in ["sick", "medical"]):
             return "Health"
 
-        if any(x in n for x in ["test", "nwea", "class", "assignment"]):
+        if any(x in n for x in ["test", "nwea", "class"]):
             return "School/Academic"
 
         return "Other"
 
     notes["barrier"] = notes[note_col].apply(classify)
-
-    # =========================================================
-    # BARRIER SUMMARY
-    # =========================================================
-    st.header("🧠 Barrier Intelligence")
 
     barrier_summary = notes["barrier"].value_counts().reset_index()
     barrier_summary.columns = ["Barrier", "Count"]
@@ -220,15 +198,17 @@ if att_file and note_file:
     col1, col2 = st.columns(2)
 
     with col1:
+        st.markdown("### 📄 Page 2: Barrier Distribution")
         st.plotly_chart(px.bar(barrier_summary, x="Barrier", y="Count"), use_container_width=True)
 
     with col2:
+        st.markdown("### 📄 Page 3: Barrier Table")
         st.dataframe(barrier_summary)
 
-    # =========================================================
-    # RISK ENGINE
-    # =========================================================
-    st.header("🔥 Predictive Risk Engine")
+    # =====================================================
+    # 📖 CHAPTER 3: RISK STORY
+    # =====================================================
+    st.markdown("## 📖 Chapter 3: Attendance Risk Narrative")
 
     weights = {
         "Transportation": 0.9,
@@ -272,37 +252,38 @@ if att_file and note_file:
     col1, col2 = st.columns(2)
 
     with col1:
+        st.markdown("### 📄 Page 4: Risk Distribution")
         st.plotly_chart(px.histogram(student_risk, x="risk_score"), use_container_width=True)
 
     with col2:
+        st.markdown("### 📄 Page 5: Risk Table")
         st.dataframe(student_risk)
 
-    # =========================================================
-    # STUDENT DRILLDOWN (FIXED)
-    # =========================================================
-    st.header("🧍 Student Drilldown")
+    # =====================================================
+    # 📖 CHAPTER 4: STUDENT STORY VIEW
+    # =====================================================
+    st.markdown("## 📖 Chapter 4: Student Story")
 
     students = sorted(student_risk["student_id"].unique())
-
     student = st.selectbox("Select Student", students)
 
     student_name = student_risk[
         student_risk["student_id"] == student
     ]["student_name"].iloc[0]
 
-    st.subheader(f"{student_name} ({student})")
+    st.markdown(f"### 📖 Story: {student_name} ({student})")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Risk Profile")
+        st.markdown("### 📄 Page 6: Student Risk Profile")
         st.dataframe(student_risk[student_risk["student_id"] == student])
 
     with col2:
-        st.subheader("Notes")
+        st.markdown("### 📄 Page 7: Student Notes Narrative")
         st.dataframe(
             safe_df(notes[notes["student_id"] == student])
         )
 
 else:
-    st.info("Upload both files to begin.")
+    st.info("Upload both Attendance and Notes files to begin your Data Story.")
