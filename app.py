@@ -5,31 +5,27 @@ import plotly.express as px
 import re
 
 # =========================================================
-# PAGE CONFIG (clean executive look)
+# PAGE SETUP
 # =========================================================
-st.set_page_config(
-    page_title="Attendance Intelligence System",
-    layout="wide"
-)
+st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
 
-# =========================================================
-# HEADER
-# =========================================================
 st.title("📊 Attendance Intelligence System")
-st.markdown("""
-### Barrier Analysis • Predictive Risk Scoring • Intervention Intelligence
-This system transforms attendance notes into actionable intervention signals.
-""")
+st.markdown("Barrier Intelligence • Predictive Risk Scoring • Intervention Insights")
+
 
 # =========================================================
-# SAFE UTILITIES
+# SAFE DATA HANDLING
 # =========================================================
 def safe_df(df):
     df = df.copy()
-    df = df.replace([np.inf, -np.inf], np.nan).fillna("")
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna("")
     return df.astype(str)
 
 
+# =========================================================
+# FIX COLUMN ISSUES (duplicate + messy headers)
+# =========================================================
 def clean_columns(df):
     seen = {}
     new_cols = []
@@ -42,19 +38,47 @@ def clean_columns(df):
         else:
             seen[c] += 1
             new_cols.append(f"{c}_{seen[c]}")
+
     df.columns = new_cols
     return df
 
 
-def extract_id(x):
-    if pd.isna(x):
+# =========================================================
+# EXTRACT ID FROM MIXED CELLS
+# =========================================================
+def extract_id(val):
+    if pd.isna(val):
         return ""
-    match = re.search(r"\d+", str(x))
-    return match.group(0) if match else str(x).strip()
+    val = str(val)
+    match = re.search(r"\d+", val)
+    return match.group(0) if match else val.strip()
 
 
 # =========================================================
-# UPLOAD SECTION (VISUAL BLOCK)
+# ROBUST COLUMN DETECTION (FIXES YOUR ERROR)
+# =========================================================
+def detect_best_column(df):
+    best_col = None
+    best_score = -1
+
+    for col in df.columns:
+        s = df[col].astype(str)
+
+        # score structure: numeric presence + text presence
+        num_score = s.str.contains(r"\d", na=False).mean()
+        text_score = s.str.contains(r"[a-zA-Z]", na=False).mean()
+
+        score = num_score + text_score
+
+        if score > best_score:
+            best_score = score
+            best_col = col
+
+    return best_col
+
+
+# =========================================================
+# UPLOAD SECTION
 # =========================================================
 st.header("📂 Upload Data")
 
@@ -68,10 +92,13 @@ with col2:
 
 
 # =========================================================
-# MAIN PIPELINE
+# MAIN APP
 # =========================================================
 if att_file and note_file:
 
+    # -------------------------
+    # LOAD DATA
+    # -------------------------
     attendance = pd.read_excel(att_file, header=None)
     notes = pd.read_excel(note_file, header=None)
 
@@ -82,54 +109,48 @@ if att_file and note_file:
     notes = notes.fillna("")
 
     # =========================================================
-    # IDENTIFY ID COLUMNS
+    # AUTO DETECT ID COLUMNS (FIXED)
     # =========================================================
-    att_id = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c]
-    note_id = [c for c in notes.columns if "name" in c or "student" in c or "id" in c]
+    att_id_col = detect_best_column(attendance)
+    note_id_col = detect_best_column(notes)
 
-    if not att_id or not note_id:
-        st.error("Could not detect student ID columns")
-        st.stop()
+    attendance["student_id"] = attendance[att_id_col].apply(extract_id)
+    notes["student_id"] = notes[note_id_col].apply(extract_id)
 
-    attendance["student_id"] = attendance[att_id[0]].apply(extract_id)
-    notes["student_id"] = notes[note_id[0]].apply(extract_id)
+    st.success(f"Detected Attendance ID Column: {att_id_col}")
+    st.success(f"Detected Notes ID Column: {note_id_col}")
 
     # =========================================================
-    # NOTES COLUMN DETECTION
+    # DETECT NOTES COLUMN
     # =========================================================
     note_cols = [c for c in notes.columns if "note" in c]
 
     if not note_cols:
-        st.error("No Notes column detected")
+        st.error(f"No Notes column found. Available: {list(notes.columns)}")
         st.stop()
 
     note_col = note_cols[0]
 
     # =========================================================
-    # FILTER ATTENDANCE VISITS
+    # DETECT VISIT COLUMN
     # =========================================================
     visit_cols = [c for c in notes.columns if "visit" in c]
 
     if not visit_cols:
-        st.error("No Visit column detected")
+        st.error(f"No Visit column found. Available: {list(notes.columns)}")
         st.stop()
 
     visit_col = visit_cols[0]
 
+    # =========================================================
+    # FILTER ATTENDANCE VISITS
+    # =========================================================
     attendance_visits = notes[
         notes[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
     ].copy()
 
-    # =========================================================
-    # KPI ROW (EXECUTIVE VIEW)
-    # =========================================================
-    st.header("📌 Key Indicators")
-
-    k1, k2, k3 = st.columns(3)
-
-    k1.metric("Attendance Visit Records", len(attendance_visits))
-    k2.metric("Students Tracked", attendance_visits["student_id"].nunique())
-    k3.metric("Total Notes Analyzed", len(notes))
+    st.subheader("Attendance Visit Volume")
+    st.write(len(attendance_visits))
 
     # =========================================================
     # 🧠 BARRIER CLASSIFICATION ENGINE
@@ -146,7 +167,7 @@ if att_file and note_file:
         if any(x in n for x in ["family", "home", "housing"]):
             return "Family/Home"
 
-        if any(x in n for x in ["sick", "medical", "doctor"]):
+        if any(x in n for x in ["sick", "medical", "doctor", "ill"]):
             return "Health"
 
         if any(x in n for x in ["test", "nwea", "assignment", "classwork"]):
@@ -157,26 +178,23 @@ if att_file and note_file:
     attendance_visits["barrier"] = attendance_visits[note_col].apply(classify)
 
     # =========================================================
-    # BARRIER SUMMARY (VISUAL SECTION)
+    # BARRIER SUMMARY
     # =========================================================
     st.header("🧠 Barrier Intelligence")
 
     barrier_summary = attendance_visits["barrier"].value_counts().reset_index()
     barrier_summary.columns = ["Barrier", "Count"]
 
-    c1, c2 = st.columns([1, 1])
+    col1, col2 = st.columns(2)
 
-    with c1:
-        st.plotly_chart(
-            px.bar(barrier_summary, x="Barrier", y="Count", title="Barrier Frequency"),
-            use_container_width=True
-        )
+    with col1:
+        st.plotly_chart(px.bar(barrier_summary, x="Barrier", y="Count"), use_container_width=True)
 
-    with c2:
+    with col2:
         st.dataframe(barrier_summary)
 
     # =========================================================
-    # RISK ENGINE
+    # 🔥 RISK ENGINE
     # =========================================================
     st.header("🔥 Predictive Risk Engine")
 
@@ -198,8 +216,13 @@ if att_file and note_file:
 
     student_risk["avg_impact"] = student_risk["avg_impact"].fillna(0)
 
+    max_count = student_risk["barrier_count"].max()
+    student_risk["barrier_norm"] = (
+        student_risk["barrier_count"] / max_count if max_count > 0 else 0
+    )
+
     student_risk["risk_score"] = (
-        (student_risk["barrier_count"] / student_risk["barrier_count"].max() if student_risk["barrier_count"].max() > 0 else 0) * 40 +
+        student_risk["barrier_norm"] * 40 +
         student_risk["avg_impact"] * 60
     )
 
@@ -217,21 +240,18 @@ if att_file and note_file:
     student_risk = student_risk.sort_values("risk_score", ascending=False)
 
     # =========================================================
-    # RISK VISUAL SECTION
+    # VISUALS
     # =========================================================
-    c1, c2 = st.columns([1, 1])
+    col1, col2 = st.columns(2)
 
-    with c1:
-        st.plotly_chart(
-            px.histogram(student_risk, x="risk_score", title="Risk Distribution"),
-            use_container_width=True
-        )
+    with col1:
+        st.plotly_chart(px.histogram(student_risk, x="risk_score"), use_container_width=True)
 
-    with c2:
+    with col2:
         st.dataframe(student_risk)
 
     # =========================================================
-    # STUDENT DRILLDOWN (POWER FEATURE)
+    # STUDENT DRILLDOWN
     # =========================================================
     st.header("🧍 Student Drilldown")
 
@@ -250,4 +270,4 @@ if att_file and note_file:
         )
 
 else:
-    st.info("Upload both Attendance and Notes Excel files to begin analysis.")
+    st.info("Upload both Attendance and Notes Excel files to begin.")
