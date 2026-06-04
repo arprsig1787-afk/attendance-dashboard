@@ -14,7 +14,7 @@ st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
 
 
 # =========================================================
-# SAFE UTILITIES
+# SAFE DATA HANDLING
 # =========================================================
 def safe_df(df):
     df = df.copy()
@@ -39,15 +39,62 @@ def clean_columns(df):
     return df
 
 
+# =========================================================
+# 🧠 FIXED ID EXTRACTION (NO ZIP CODES / NO ADDRESS NOISE)
+# =========================================================
 def extract_id(val):
+    """
+    Robust student ID extraction:
+    - ignores ZIP codes (5-digit standalone numbers)
+    - ignores house numbers
+    - keeps real student IDs embedded in text
+    """
+
     if pd.isna(val):
         return ""
-    match = re.search(r"\d+", str(val))
-    return match.group(0) if match else str(val).strip()
+
+    text = str(val)
+
+    nums = re.findall(r"\d+", text)
+
+    if not nums:
+        return text.strip()
+
+    # remove ZIP codes (exact 5-digit standalone numbers)
+    nums = [n for n in nums if len(n) > 3 and len(n) != 5]
+
+    if not nums:
+        return ""
+
+    return max(nums, key=len)
 
 
 # =========================================================
-# HEADER DETECTION (FIXES EXCEL EXPORT ISSUES)
+# CLEAN MIXED NAME + ID CELLS
+# =========================================================
+def clean_name_id_column(df, col):
+    def clean(x):
+        if pd.isna(x):
+            return ""
+
+        x = str(x)
+
+        ids = re.findall(r"\d{4,}", x)
+
+        # remove ZIP-like values
+        ids = [i for i in ids if len(i) != 5]
+
+        if not ids:
+            return x.strip()
+
+        return max(ids, key=len)
+
+    df[col] = df[col].apply(clean)
+    return df
+
+
+# =========================================================
+# HEADER DETECTION (FIXED FOR SIS EXPORTS)
 # =========================================================
 def find_header_row(df):
     for i in range(min(15, len(df))):
@@ -60,7 +107,7 @@ def find_header_row(df):
 
 
 # =========================================================
-# COLUMN DETECTION (ROBUST)
+# COLUMN DETECTION
 # =========================================================
 def detect_column(df, keywords):
     best_col = None
@@ -78,7 +125,7 @@ def detect_column(df, keywords):
 
 
 # =========================================================
-# UI UPLOAD
+# UI
 # =========================================================
 st.header("📂 Upload Data")
 
@@ -97,7 +144,7 @@ with col2:
 if att_file and note_file:
 
     # -------------------------
-    # RAW LOAD
+    # LOAD RAW FILES
     # -------------------------
     raw_att = pd.read_excel(att_file, header=None)
     raw_notes = pd.read_excel(note_file, header=None)
@@ -123,36 +170,35 @@ if att_file and note_file:
     att_id_col = detect_column(attendance, ["student", "name", "id"])
     note_id_col = detect_column(notes, ["student", "name", "id"])
 
+    # CLEAN MIXED NAME+ID CELLS FIRST
+    attendance = clean_name_id_column(attendance, att_id_col)
+    notes = clean_name_id_column(notes, note_id_col)
+
+    # APPLY FINAL IDS
     attendance["student_id"] = attendance[att_id_col].apply(extract_id)
     notes["student_id"] = notes[note_id_col].apply(extract_id)
 
-    # REMOVE EMPTY IDS (CRITICAL FIX)
-    attendance = attendance[attendance["student_id"] != ""]
-    notes = notes[notes["student_id"] != ""]
+    # REMOVE BAD IDS (CRITICAL FIX)
+    attendance = attendance[attendance["student_id"].str.len() > 3]
+    notes = notes[notes["student_id"].str.len() > 3]
 
     st.success(f"Attendance ID Column: {att_id_col}")
     st.success(f"Notes ID Column: {note_id_col}")
 
     # =========================================================
-    # AUTO DETECT NOTES + VISIT COLUMNS
+    # DETECT NOTES + VISITS
     # =========================================================
     note_col = detect_column(notes, ["note", "comment", "visit", "description"])
     visit_col = detect_column(notes, ["visit", "type", "description"])
 
     if not note_col or not visit_col:
-        st.error("Could not detect required columns")
+        st.error("Could not detect Notes or Visit column")
         st.stop()
 
     # =========================================================
-    # IMPORTANT FIX: DO NOT OVER-FILTER DATA
+    # DO NOT OVER-FILTER DATA (FIX FOR STUDENT LOSS ISSUE)
     # =========================================================
     attendance_visits = notes.copy()
-
-    # optional filter but SAFE (does NOT collapse dataset)
-    if visit_col in notes.columns:
-        attendance_visits = attendance_visits[
-            attendance_visits[visit_col].astype(str).str.lower().notna()
-        ]
 
     # =========================================================
     # BARRIER ENGINE
