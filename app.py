@@ -1,67 +1,59 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from sklearn.linear_model import LinearRegression
-import numpy as np
 import re
 
-st.set_page_config(page_title="Attendance Intelligence Dashboard", layout="wide")
-st.title("📊 Attendance Intelligence Dashboard (Production Stable Version)")
+st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
+st.title("📊 Attendance Intelligence System (Production Grade)")
 
 
-# ----------------------------
-# FILE UPLOAD
-# ----------------------------
-attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
-notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
+# =========================================================
+# 🔥 GLOBAL SAFETY PATCH (PREVENT STREAMLIT JSON CRASHES)
+# =========================================================
+pd.options.mode.chained_assignment = None
 
 
-# ----------------------------
-# GLOBAL CLEANER (CRITICAL FIX FOR NaN JSON CRASH)
-# ----------------------------
-def clean_for_streamlit(df):
+def safe_ui(df):
+    """
+    CRITICAL: prevents Streamlit JSON rendering crashes
+    """
     df = df.copy()
-
-    # remove broken numeric values
     df = df.replace([np.inf, -np.inf], np.nan)
-
-    # drop empty columns
-    df = df.dropna(axis=1, how="all")
-
-    # fill ALL NaN for UI safety
     df = df.fillna("")
+    return df.astype(str)
 
-    return df
 
-
-# ----------------------------
-# CLEAN COLUMNS (SAFE + UNIQUE)
-# ----------------------------
+# =========================================================
+# 🧼 DATA CLEANING ENGINE
+# =========================================================
 def clean_columns(df):
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    new_cols = []
-    seen = {}
+    # remove bad columns
+    df = df.loc[:, ~df.columns.astype(str).str.contains("nan", na=False)]
+    df = df.loc[:, ~df.columns.isna()]
 
-    for col in df.columns:
-        if col not in seen:
-            seen[col] = 0
-            new_cols.append(col)
+    # fix duplicates
+    seen = {}
+    new_cols = []
+
+    for c in df.columns:
+        if c not in seen:
+            seen[c] = 0
+            new_cols.append(c)
         else:
-            seen[col] += 1
-            new_cols.append(f"{col}_{seen[col]}")
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
 
     df.columns = new_cols
-
-    # remove junk columns
-    df = df.loc[:, ~df.columns.astype(str).str.contains("nan", na=False)]
-
     return df
 
 
-# ----------------------------
-# HEADER FIX (SIS REPORT DETECTION)
-# ----------------------------
+# =========================================================
+# 🧠 HEADER DETECTION (FIXES SIS REPORTS)
+# =========================================================
 def fix_headers(df):
     for i in range(min(15, len(df))):
         row = df.iloc[i].astype(str).str.lower()
@@ -74,204 +66,205 @@ def fix_headers(df):
     return df
 
 
-# ----------------------------
-# EXTRACT ID FROM MESSY STRINGS
-# ----------------------------
-def extract_id(text):
-    if pd.isna(text):
+# =========================================================
+# 🧾 ID EXTRACTION (handles name+id mixed cells)
+# =========================================================
+def extract_id(x):
+    if pd.isna(x):
         return ""
-    match = re.search(r"\d+", str(text))
-    return match.group(0) if match else str(text).strip()
+    match = re.search(r"\d+", str(x))
+    return match.group(0) if match else str(x).strip()
 
 
-# ----------------------------
-# BARRIER DETECTION
-# ----------------------------
+# =========================================================
+# 🚧 BARRIER DETECTION (RULE + NLP LIGHTWEIGHT)
+# =========================================================
 def detect_barrier(text):
     text = str(text).lower()
 
-    if "bus" in text or "transport" in text:
-        return "Transportation"
-    if "housing" in text or "homeless" in text or "shelter" in text:
-        return "Housing Instability"
-    if "sick" in text or "doctor" in text or "ill" in text:
-        return "Health"
-    if "behavior" in text or "suspension" in text:
-        return "Behavior"
-    if "work" in text or "job" in text:
-        return "Work Conflict"
-    if "family" in text or "care" in text:
-        return "Family Responsibility"
-    if "sleep" in text or "tired" in text:
-        return "Attendance Fatigue"
+    rules = {
+        "Transportation": ["bus", "transport", "ride", "car"],
+        "Housing Instability": ["housing", "homeless", "shelter"],
+        "Health": ["sick", "doctor", "ill", "hospital"],
+        "Behavior": ["behavior", "suspension", "office referral"],
+        "Work Conflict": ["work", "job", "shift"],
+        "Family Responsibility": ["family", "care", "babysit"],
+        "Attendance Fatigue": ["tired", "sleep", "late"]
+    }
 
-    return "Other / Unclear"
+    for k, keywords in rules.items():
+        if any(w in text for w in keywords):
+            return k
+
+    return "Other"
 
 
-# ----------------------------
-# MAIN APP
-# ----------------------------
+# =========================================================
+# 📥 UPLOADS
+# =========================================================
+attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
+notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
+
+
+# =========================================================
+# 🚀 MAIN ENGINE
+# =========================================================
 if attendance_file and notes_file:
 
     # LOAD RAW
     attendance = pd.read_excel(attendance_file, header=None)
     notes = pd.read_excel(notes_file, header=None)
 
-    # FIX HEADERS
+    # FIX STRUCTURE
     attendance = fix_headers(attendance)
     notes = fix_headers(notes)
 
-    # CLEAN STRUCTURE
     attendance = clean_columns(attendance)
     notes = clean_columns(notes)
 
-    st.subheader("Cleaned Preview")
-    st.dataframe(clean_for_streamlit(attendance.head()))
-    st.dataframe(clean_for_streamlit(notes.head()))
+    # =====================================================
+    # 🧍 STUDENT COLUMN DETECTION
+    # =====================================================
+    att_id_col = [c for c in attendance.columns if "student" in str(c) or "name" in str(c) or "id" in str(c)]
+    note_id_col = [c for c in notes.columns if "student" in str(c) or "name" in str(c) or "id" in str(c)]
 
-    # ----------------------------
-    # STUDENT ID DETECTION (ATTENDANCE)
-    # ----------------------------
-    id_cols_att = [c for c in attendance.columns if "student" in str(c) or "name" in str(c) or "id" in str(c)]
-
-    if len(id_cols_att) == 0:
-        st.error("No student column found in attendance.")
+    if not att_id_col or not note_id_col:
+        st.error("Could not detect student ID columns.")
         st.stop()
 
-    att_id_col = id_cols_att[0]
+    att_id_col = att_id_col[0]
+    note_id_col = note_id_col[0]
+
     attendance["student_id"] = attendance[att_id_col].apply(extract_id)
+    notes["student_id"] = notes[note_id_col].apply(extract_id)
 
-    # ----------------------------
-    # STUDENT ID DETECTION (NOTES)
-    # ----------------------------
-    id_cols_notes = [c for c in notes.columns if "student" in str(c) or "name" in str(c) or "id" in str(c)]
+    # =====================================================
+    # 📝 NOTES COLUMN DETECTION
+    # =====================================================
+    note_cols = [c for c in notes.columns if "note" in str(c).lower()]
 
-    if len(id_cols_notes) == 0:
-        st.error("No student column found in notes.")
+    if not note_cols:
+        st.error(f"No notes column found. Columns: {notes.columns.tolist()}")
         st.stop()
 
-    notes["student_id"] = notes[id_cols_notes[0]].apply(extract_id)
+    notes["notes_text"] = notes[note_cols[0]].astype(str)
 
-    # ----------------------------
-    # NOTES COLUMN FIX
-    # ----------------------------
-    notes_cols = [c for c in notes.columns if "note" in str(c)]
+    # =====================================================
+    # 📊 ATTENDANCE STRUCTURE
+    # =====================================================
+    week_cols = [c for c in attendance.columns if "week" in str(c).lower()]
 
-    if len(notes_cols) == 0:
-        st.error(f"No Notes column found. Columns: {notes.columns.tolist()}")
-        st.stop()
-
-    notes_col = notes_cols[0]
-    notes["notes_text"] = notes[notes_col].astype(str)
-
-    # ----------------------------
-    # ATTENDANCE STRUCTURE
-    # ----------------------------
-    week_cols = [c for c in attendance.columns if "wk" in str(c) or "week" in str(c)]
-
-    if len(week_cols) > 0:
-
+    if week_cols:
         attendance = attendance.melt(
             id_vars=[att_id_col, "student_id"],
             value_vars=week_cols,
             var_name="week",
             value_name="attendance_pct"
         )
-
     else:
         pct_cols = [c for c in attendance.columns if "%" in str(c) or "att" in str(c)]
 
-        if len(pct_cols) == 0:
-            st.error("Could not detect attendance percentage column.")
+        if not pct_cols:
+            st.error("No attendance column detected.")
             st.stop()
 
         attendance["attendance_pct"] = attendance[pct_cols[0]]
+        attendance["week"] = 1
 
-        if "week" not in attendance.columns:
-            attendance["week"] = 1
-
-    # CLEAN NUMERIC
     attendance["attendance_pct"] = pd.to_numeric(attendance["attendance_pct"], errors="coerce")
 
-    # FINAL SAFE CLEAN
-    attendance = clean_for_streamlit(attendance)
-    notes = clean_for_streamlit(notes)
+    # =====================================================
+    # 🧹 FINAL SAFE CLEAN (CRITICAL)
+    # =====================================================
+    attendance = attendance.replace([np.inf, -np.inf], np.nan).fillna("")
+    notes = notes.replace([np.inf, -np.inf], np.nan).fillna("")
 
-    # ----------------------------
-    # TREND
-    # ----------------------------
+    # =====================================================
+    # 📊 DATA PREVIEW (SAFE MODE)
+    # =====================================================
+    st.subheader("Cleaned Data Preview")
+    st.dataframe(safe_ui(attendance.head()))
+    st.dataframe(safe_ui(notes.head()))
+
+    # =====================================================
+    # 📈 TREND ANALYSIS
+    # =====================================================
     st.header("📈 Attendance Trend")
 
-    trend = attendance.groupby("week")["attendance_pct"].mean().reset_index()
-    trend = trend.sort_values("week")
+    trend = attendance.copy()
+    trend["attendance_pct"] = pd.to_numeric(trend["attendance_pct"], errors="coerce")
 
-    st.plotly_chart(px.line(trend, x="week", y="attendance_pct"), use_container_width=True)
+    trend = trend.groupby("week")["attendance_pct"].mean().reset_index()
 
-    # ----------------------------
-    # FORECAST
-    # ----------------------------
+    if len(trend) > 0:
+        st.plotly_chart(px.line(trend, x="week", y="attendance_pct"), use_container_width=True)
+
+    # =====================================================
+    # 🔮 FORECASTING
+    # =====================================================
     st.subheader("📊 Forecast")
 
-    trend = trend.reset_index(drop=True)
-    trend["week_num"] = np.arange(len(trend))
+    if len(trend) > 1:
+        trend = trend.reset_index(drop=True)
+        trend["week_num"] = np.arange(len(trend))
 
-    model = LinearRegression()
-    model.fit(trend[["week_num"]], trend["attendance_pct"])
+        model = LinearRegression()
+        model.fit(trend[["week_num"]], trend["attendance_pct"])
 
-    future = np.arange(len(trend) + 4).reshape(-1, 1)
-    forecast = model.predict(future)
+        future = np.arange(len(trend) + 4).reshape(-1, 1)
+        forecast = model.predict(future)
 
-    forecast_df = pd.DataFrame({
-        "Week": range(len(forecast)),
-        "Predicted Attendance": forecast
-    })
+        forecast_df = pd.DataFrame({
+            "Week": range(len(forecast)),
+            "Predicted Attendance": forecast
+        })
 
-    st.plotly_chart(px.line(forecast_df, x="Week", y="Predicted Attendance"), use_container_width=True)
+        st.plotly_chart(px.line(forecast_df, x="Week", y="Predicted Attendance"),
+                        use_container_width=True)
 
-    # ----------------------------
-    # BARRELS
-    # ----------------------------
+    # =====================================================
+    # 🚧 BARRIER ANALYSIS
+    # =====================================================
     st.header("🚧 Barrier Analysis")
 
-    notes["barrier_type"] = notes["notes_text"].apply(detect_barrier)
+    notes["barrier"] = notes["notes_text"].apply(detect_barrier)
 
-    barrier_counts = notes["barrier_type"].value_counts().reset_index()
+    barrier_counts = notes["barrier"].value_counts().reset_index()
     barrier_counts.columns = ["Barrier", "Count"]
 
-    barrier_counts = clean_for_streamlit(barrier_counts)
-
-    st.dataframe(barrier_counts)
-
     st.plotly_chart(px.bar(barrier_counts, x="Barrier", y="Count"), use_container_width=True)
+    st.dataframe(safe_ui(barrier_counts))
 
-    # ----------------------------
-    # INSIGHTS
-    # ----------------------------
-    st.header("🧠 Insights")
+    # =====================================================
+    # 🧠 INSIGHTS ENGINE
+    # =====================================================
+    st.header("🧠 Executive Insights")
 
-    top_barrier = barrier_counts.iloc[0]["Barrier"] if len(barrier_counts) > 0 else "None"
+    top_barrier = barrier_counts.iloc[0]["Barrier"] if len(barrier_counts) else "None"
 
     st.write(f"""
     - Top Barrier: {top_barrier}
-    - System is stable with messy SIS exports
+    - System successfully parsed messy SIS exports
     - NaN-safe rendering enabled
+    - Forecasting active when enough data exists
     """)
 
-    # ----------------------------
-    # STUDENT VIEW (SAFE)
-    # ----------------------------
-    st.header("🧍 Student View")
+    # =====================================================
+    # 🧍 STUDENT VIEW (SAFE)
+    # =====================================================
+    st.header("🧍 Student Journey View")
 
-    students = attendance["student_id"].dropna().astype(str).unique()
+    students = attendance["student_id"].astype(str)
+    students = students[students != ""].unique()
 
     if len(students) > 0:
         student = st.selectbox("Select Student", students)
 
         st.subheader("Attendance")
-        st.dataframe(clean_for_streamlit(attendance[attendance["student_id"] == student]))
+        st.dataframe(safe_ui(attendance[attendance["student_id"] == student]))
 
         st.subheader("Notes")
-        st.dataframe(clean_for_streamlit(notes[notes["student_id"] == student]))
+        st.dataframe(safe_ui(notes[notes["student_id"] == student]))
 
 else:
-    st.info("Upload both files to begin.")
+    st.info("Upload both Attendance and Notes Excel files to begin.")
