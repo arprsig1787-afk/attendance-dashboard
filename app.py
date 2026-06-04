@@ -4,16 +4,12 @@ import numpy as np
 import plotly.express as px
 import re
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
-from sklearn.linear_model import LinearRegression
-
-st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
-st.title("📊 Attendance Intelligence System (Smart Filter Version)")
+st.set_page_config(page_title="Attendance Intelligence Engine", layout="wide")
+st.title("📊 Attendance Intelligence Engine (Barrier Impact Model)")
 
 
 # =========================================================
-# SAFE RENDER (prevents Streamlit JSON crashes)
+# SAFE DATA HANDLING (prevents Streamlit crashes)
 # =========================================================
 def safe_ui(df):
     df = df.copy()
@@ -22,53 +18,33 @@ def safe_ui(df):
     return df.astype(str)
 
 
-# =========================================================
-# FORCE UNIQUE COLUMNS (fix Streamlit crash)
-# =========================================================
 def force_unique_columns(df):
-    seen = {}
+    cols = {}
     new_cols = []
 
     for c in df.columns:
         c = str(c).strip().lower()
-
-        if c not in seen:
-            seen[c] = 0
+        if c not in cols:
+            cols[c] = 0
             new_cols.append(c)
         else:
-            seen[c] += 1
-            new_cols.append(f"{c}_{seen[c]}")
+            cols[c] += 1
+            new_cols.append(f"{c}_{cols[c]}")
 
     df.columns = new_cols
     return df
 
 
-# =========================================================
-# CLEAN COLUMNS
-# =========================================================
-def clean_columns(df):
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    df = df.loc[:, ~df.columns.astype(str).str.contains("nan", na=False)]
-    df = df.loc[:, ~df.columns.isna()]
-    return df
-
-
-# =========================================================
-# HEADER FIX (SIS exports)
-# =========================================================
 def fix_headers(df):
-    for i in range(min(15, len(df))):
+    for i in range(min(10, len(df))):
         row = df.iloc[i].astype(str).str.lower()
         if any("student" in x for x in row) or any("note" in x for x in row):
             df.columns = df.iloc[i]
-            df = df[i + 1:]
+            df = df[i+1:]
             return df.reset_index(drop=True)
     return df
 
 
-# =========================================================
-# EXTRACT ID (handles name + id combo)
-# =========================================================
 def extract_id(x):
     if pd.isna(x):
         return ""
@@ -77,229 +53,135 @@ def extract_id(x):
 
 
 # =========================================================
-# UPLOAD FILES
+# FILE UPLOAD
 # =========================================================
-attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
-notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
+att_file = st.file_uploader("Upload Attendance File", type=["xlsx"])
+note_file = st.file_uploader("Upload Notes File", type=["xlsx"])
 
 
 # =========================================================
 # MAIN PIPELINE
 # =========================================================
-if attendance_file and notes_file:
+if att_file and note_file:
 
-    # -------------------------
-    # LOAD
-    # -------------------------
-    attendance = pd.read_excel(attendance_file, header=None)
-    notes = pd.read_excel(notes_file, header=None)
+    attendance = pd.read_excel(att_file, header=None)
+    notes = pd.read_excel(note_file, header=None)
 
-    # -------------------------
-    # STRUCTURE CLEAN
-    # -------------------------
-    attendance = clean_columns(fix_headers(attendance))
-    notes = clean_columns(fix_headers(notes))
+    attendance = force_unique_columns(fix_headers(attendance))
+    notes = force_unique_columns(fix_headers(notes))
 
-    attendance = force_unique_columns(attendance)
-    notes = force_unique_columns(notes)
-
-    # -------------------------
-    # DETECT ID COLUMNS
-    # -------------------------
-    att_id_col = [c for c in attendance.columns if "student" in c or "name" in c or "id" in c]
-    note_id_col = [c for c in notes.columns if "student" in c or "name" in c or "id" in c]
-
-    if not att_id_col or not note_id_col:
-        st.error("Could not detect student ID columns.")
-        st.stop()
-
-    att_id_col = att_id_col[0]
-    note_id_col = note_id_col[0]
-
-    attendance["student_id"] = attendance[att_id_col].apply(extract_id)
-    notes["student_id"] = notes[note_id_col].apply(extract_id)
-
-    # -------------------------
-    # NOTES COLUMN
-    # -------------------------
-    note_cols = [c for c in notes.columns if "note" in c]
-
-    if not note_cols:
-        st.error(f"No Notes column found. Columns: {notes.columns.tolist()}")
-        st.stop()
-
-    notes["notes_text"] = notes[note_cols[0]].astype(str)
-
-    # -------------------------
-    # ATTENDANCE COLUMN
-    # -------------------------
-    pct_cols = [c for c in attendance.columns if "att" in c or "%" in c]
-
-    if pct_cols:
-        attendance["attendance_pct"] = pd.to_numeric(attendance[pct_cols[0]], errors="coerce")
-    else:
-        attendance["attendance_pct"] = 0
-
-    attendance["week"] = 1
-
-    # -------------------------
-    # FINAL CLEAN
-    # -------------------------
     attendance = attendance.replace([np.inf, -np.inf], np.nan).fillna("")
     notes = notes.replace([np.inf, -np.inf], np.nan).fillna("")
 
-    # =========================================================
-    # PREVIEW
-    # =========================================================
-    st.subheader("Cleaned Data Preview")
-    st.dataframe(safe_ui(force_unique_columns(attendance.head())))
-    st.dataframe(safe_ui(force_unique_columns(notes.head())))
+    # ---------------------------
+    # ID DETECTION
+    # ---------------------------
+    att_id = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c][0]
+    note_id = [c for c in notes.columns if "name" in c or "student" in c or "id" in c][0]
+
+    attendance["student_id"] = attendance[att_id].apply(extract_id)
+    notes["student_id"] = notes[note_id].apply(extract_id)
+
+    # ---------------------------
+    # NOTES COLUMN DETECTION
+    # ---------------------------
+    note_col = [c for c in notes.columns if "note" in c]
+
+    if not note_col:
+        st.error("No notes column detected")
+        st.stop()
+
+    note_col = note_col[0]
+    notes["notes_text"] = notes[note_col].astype(str)
+
+    # ---------------------------
+    # VISIT FILTER (SMART)
+    # ---------------------------
+    visit_col = [c for c in notes.columns if "visit" in c]
+
+    if not visit_col:
+        st.error("No visit column detected")
+        st.stop()
+
+    visit_col = visit_col[0]
+
+    attendance_visits = notes[
+        notes[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
+    ].copy()
+
+    st.subheader("Attendance Visit Volume")
+    st.write(len(attendance_visits))
 
     # =========================================================
-    # 📈 TREND
+    # 🧠 BARRIER IMPACT SCORING ENGINE
     # =========================================================
-    st.header("📈 Attendance Trend")
 
-    trend = attendance.copy()
-    trend["attendance_pct"] = pd.to_numeric(trend["attendance_pct"], errors="coerce")
+    def classify_barrier(note):
+        n = str(note).lower()
 
-    trend = trend.groupby("week")["attendance_pct"].mean().reset_index()
+        if any(x in n for x in ["bus", "transport", "ride", "pickup", "drop off"]):
+            return "Transportation"
 
-    if len(trend) > 0:
-        st.plotly_chart(px.line(trend, x="week", y="attendance_pct"))
+        if any(x in n for x in ["voicemail", "no answer", "left message", "called"]):
+            return "Contact Attempted"
 
-    # =========================================================
-    # 🔮 FORECAST
-    # =========================================================
-    if len(trend) > 1:
-        trend["week_num"] = np.arange(len(trend))
+        if any(x in n for x in ["family", "home", "housing", "guardian"]):
+            return "Family/Home"
 
-        model = LinearRegression()
-        model.fit(trend[["week_num"]], trend["attendance_pct"])
+        if any(x in n for x in ["sick", "doctor", "medical", "ill"]):
+            return "Health"
 
-        future = np.arange(len(trend) + 4).reshape(-1, 1)
-        forecast = model.predict(future)
+        if any(x in n for x in ["test", "nwea", "classwork", "assignment"]):
+            return "School/Academic"
 
-        st.subheader("Forecast")
-        st.plotly_chart(px.line(x=list(range(len(forecast))), y=forecast))
+        return "Other"
+
+    attendance_visits["barrier"] = attendance_visits[note_col].apply(classify_barrier)
 
     # =========================================================
-    # 📞 ATTENDANCE VISIT INTELLIGENCE (FIXED FILTER)
+    # 📊 IMPACT SCORING (NEW VALUE ADD)
     # =========================================================
-    st.header("📞 Attendance Visit Intelligence")
 
-    notes_clean = notes.copy()
-    notes_clean.columns = [str(c).strip().lower() for c in notes_clean.columns]
+    impact_weights = {
+        "Transportation": 0.9,
+        "Contact Attempted": 0.7,
+        "Family/Home": 0.8,
+        "Health": 0.6,
+        "School/Academic": 0.5,
+        "Other": 0.3
+    }
 
-    visit_col = [c for c in notes_clean.columns if "visit" in c]
-    note_col = [c for c in notes_clean.columns if "note" in c]
+    attendance_visits["impact_score"] = attendance_visits["barrier"].map(impact_weights)
 
-    if visit_col and note_col:
+    barrier_summary = attendance_visits.groupby("barrier").agg(
+        count=("barrier", "count"),
+        avg_impact=("impact_score", "mean")
+    ).reset_index()
 
-        visit_col = visit_col[0]
-        note_col = note_col[0]
+    barrier_summary["total_weighted_impact"] = barrier_summary["count"] * barrier_summary["avg_impact"]
 
-        # 🔥 FIXED: flexible matching instead of strict equality
-        attendance_visits = notes_clean[
-            notes_clean[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
-        ].copy()
+    barrier_summary = barrier_summary.sort_values("total_weighted_impact", ascending=False)
 
-        st.write("Unique Visit Types Found:")
-        st.write(notes_clean[visit_col].astype(str).value_counts().head(15))
+    st.header("📊 Barrier Impact Dashboard")
 
-        st.write("Filtered Attendance Visits Count:")
-        st.write(len(attendance_visits))
+    st.dataframe(barrier_summary)
 
-        def classify(note):
-            note = str(note).lower()
-
-            if any(x in note for x in ["voicemail", "voice mail", "no answer"]):
-                return "Voicemail / No Answer"
-
-            if any(x in note for x in ["called", "contacted", "spoke with"]):
-                return "Parent Contact"
-
-            if any(x in note for x in ["intervention", "mtss", "meeting"]):
-                return "Intervention"
-
-            if any(x in note for x in ["sick", "ill", "doctor"]):
-                return "Health"
-
-            if any(x in note for x in ["family", "care"]):
-                return "Family"
-
-            return "Other"
-
-        attendance_visits["category"] = attendance_visits[note_col].apply(classify)
-
-        counts = attendance_visits["category"].value_counts().reset_index()
-        counts.columns = ["Category", "Count"]
-
-        st.plotly_chart(px.bar(counts, x="Category", y="Count"))
-        st.dataframe(counts)
-
-        st.dataframe(safe_ui(attendance_visits.head(50)))
-
-    else:
-        st.warning("Visit Description or Notes columns not found.")
-
-    # =========================================================
-    # 🧠 NLP (NOW ALWAYS WORKS WHEN DATA EXISTS)
-    # =========================================================
-    st.header("🧠 Barrier Pattern Discovery (Attendance NLP)")
-
-    if "attendance_visits" in locals() and len(attendance_visits) > 0:
-
-        texts = attendance_visits[note_col].astype(str).tolist()
-        texts = [t for t in texts if len(str(t).strip()) > 2]
-
-        if len(texts) > 2:
-
-            vectorizer = TfidfVectorizer(stop_words="english", max_features=200)
-            X = vectorizer.fit_transform(texts)
-
-            k = min(5, len(texts))
-            model = KMeans(n_clusters=k, random_state=42, n_init=10)
-            clusters = model.fit_predict(X)
-
-            attendance_visits["cluster"] = clusters
-
-            terms = vectorizer.get_feature_names_out()
-
-            cluster_labels = {}
-
-            for i in range(k):
-                center = model.cluster_centers_[i]
-                top_words = [terms[j] for j in center.argsort()[-3:]]
-                cluster_labels[i] = " / ".join(top_words)
-
-            attendance_visits["pattern"] = attendance_visits["cluster"].map(cluster_labels)
-
-            summary = attendance_visits["pattern"].value_counts().reset_index()
-            summary.columns = ["Pattern", "Count"]
-
-            st.plotly_chart(px.bar(summary, x="Pattern", y="Count"))
-            st.dataframe(summary)
-
-        else:
-            st.warning("Not enough text for NLP clustering.")
+    st.plotly_chart(px.bar(barrier_summary, x="barrier", y="total_weighted_impact"))
 
     # =========================================================
     # 🧍 STUDENT VIEW
     # =========================================================
     st.header("🧍 Student View")
 
-    students = attendance["student_id"].astype(str)
-    students = students[students != ""].unique()
+    students = attendance["student_id"].unique()
 
-    if len(students) > 0:
-        student = st.selectbox("Select Student", students)
+    student = st.selectbox("Select Student", students)
 
-        st.subheader("Attendance")
-        st.dataframe(safe_ui(attendance[attendance["student_id"] == student]))
+    st.subheader("Attendance Records")
+    st.dataframe(safe_ui(attendance[attendance["student_id"] == student]))
 
-        st.subheader("Notes")
-        st.dataframe(safe_ui(notes[notes["student_id"] == student]))
+    st.subheader("Attendance Notes")
+    st.dataframe(safe_ui(attendance_visits[attendance_visits["student_id"] == student]))
 
 else:
-    st.info("Upload both files to begin.")
+    st.info("Upload both files to begin")
