@@ -14,20 +14,22 @@ st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
 
 
 # =========================================================
-# SAFE UTILITIES
+# SAFE HELPERS
 # =========================================================
 def safe_df(df):
     df = df.copy()
     df = df.replace([np.inf, -np.inf], np.nan).fillna("")
-    return df.astype(str)
+    return df
 
 
 def clean_columns(df):
-    seen = {}
+    df = df.copy()
     cols = []
+    seen = {}
 
     for c in df.columns:
         c = str(c).strip().lower()
+
         if c not in seen:
             seen[c] = 0
             cols.append(c)
@@ -40,7 +42,7 @@ def clean_columns(df):
 
 
 # =========================================================
-# 🧠 SPLIT NAME + ID FROM SAME CELL (KEY FIX)
+# 🧠 CORE FIX: SPLIT NAME + ID (ROBUST)
 # =========================================================
 def split_name_id(val):
     """
@@ -53,17 +55,17 @@ def split_name_id(val):
     if pd.isna(val):
         return "", ""
 
-    text = str(val).strip()
+    text = str(val)
 
-    # extract ID candidates
-    ids = re.findall(r"\d{4,}", text)
+    # extract all numeric groups
+    nums = re.findall(r"\d{4,}", text)
 
-    # remove ZIP codes
-    ids = [i for i in ids if len(i) != 5]
+    # remove year-like / zip-like values
+    nums = [n for n in nums if n not in ["2025", "2026"] and len(n) != 5]
 
-    student_id = max(ids, key=len) if ids else ""
+    student_id = max(nums, key=len) if nums else ""
 
-    # clean name portion
+    # clean name
     name = re.sub(r"\d{4,}", "", text)
     name = re.sub(r"[\(\)\-\|,:]", " ", name)
     name = " ".join(name.split()).strip()
@@ -72,7 +74,7 @@ def split_name_id(val):
 
 
 # =========================================================
-# HEADER DETECTION
+# HEADER DETECTION (SIS SAFE)
 # =========================================================
 def find_header_row(df):
     for i in range(min(15, len(df))):
@@ -85,7 +87,7 @@ def find_header_row(df):
 
 
 # =========================================================
-# COLUMN DETECTION
+# COLUMN DETECTION (NOT USED FOR ID ANYMORE)
 # =========================================================
 def detect_column(df, keywords):
     best_col = None
@@ -143,75 +145,76 @@ if att_file and note_file:
     st.success(f"Notes header row: {note_header}")
 
     # =========================================================
-    # DETECT ID COLUMNS (RAW)
+    # 🔥 CRITICAL FIX: DO NOT USE DETECTED ID COLUMNS
     # =========================================================
-    att_id_col = detect_column(attendance, ["student", "name", "id"])
-    note_id_col = detect_column(notes, ["student", "name", "id"])
 
-    # =========================================================
-    # SPLIT NAME + ID (CORE FIX)
-    # =========================================================
-    attendance[["student_name", "student_id"]] = attendance[att_id_col].apply(
+    # force a stable identity source (usually first column)
+    attendance["raw_identity"] = attendance.iloc[:, 0]
+    notes["raw_identity"] = notes.iloc[:, 0]
+
+    # split name + ID
+    attendance[["student_name", "student_id"]] = attendance["raw_identity"].apply(
         lambda x: pd.Series(split_name_id(x))
     )
 
-    notes[["student_name", "student_id"]] = notes[note_id_col].apply(
+    notes[["student_name", "student_id"]] = notes["raw_identity"].apply(
         lambda x: pd.Series(split_name_id(x))
     )
 
-    # REMOVE BAD IDS
+    # remove bad IDs
     attendance = attendance[attendance["student_id"] != ""]
     notes = notes[notes["student_id"] != ""]
 
-    st.success(f"Attendance ID Column: {att_id_col}")
-    st.success(f"Notes ID Column: {note_id_col}")
+    # final cleanup
+    attendance["student_id"] = attendance["student_id"].astype(str)
+    notes["student_id"] = notes["student_id"].astype(str)
+
+    # remove year contamination
+    attendance = attendance[~attendance["student_id"].isin(["2025", "2026"])]
+    notes = notes[~notes["student_id"].isin(["2025", "2026"])]
+
+    st.success("Student identity extraction complete")
 
     # =========================================================
-    # DETECT NOTES + VISIT COLUMNS
+    # NOTES COLUMN DETECTION
     # =========================================================
     note_col = detect_column(notes, ["note", "comment", "visit", "description"])
-    visit_col = detect_column(notes, ["visit", "type", "description"])
 
-    if not note_col or not visit_col:
-        st.error("Could not detect Notes or Visit column")
+    if not note_col:
+        st.error("Could not detect notes column")
         st.stop()
 
     # =========================================================
-    # FULL DATASET (NO OVER-FILTERING)
-    # =========================================================
-    attendance_visits = notes.copy()
-
-    # =========================================================
-    # BARRIER ENGINE
+    # BARRIER CLASSIFICATION
     # =========================================================
     def classify(note):
         n = str(note).lower()
 
-        if any(x in n for x in ["bus", "transport", "ride", "pickup", "drop"]):
+        if any(x in n for x in ["bus", "transport", "ride", "pickup"]):
             return "Transportation"
 
-        if any(x in n for x in ["voicemail", "no answer", "left message", "called"]):
+        if any(x in n for x in ["voicemail", "no answer", "called", "left message"]):
             return "Contact Attempted"
 
         if any(x in n for x in ["family", "home", "housing"]):
             return "Family/Home"
 
-        if any(x in n for x in ["sick", "medical", "doctor"]):
+        if any(x in n for x in ["sick", "doctor", "medical"]):
             return "Health"
 
-        if any(x in n for x in ["test", "nwea", "assignment", "classwork"]):
+        if any(x in n for x in ["test", "nwea", "class", "assignment"]):
             return "School/Academic"
 
         return "Other"
 
-    attendance_visits["barrier"] = attendance_visits[note_col].apply(classify)
+    notes["barrier"] = notes[note_col].apply(classify)
 
     # =========================================================
     # BARRIER SUMMARY
     # =========================================================
     st.header("🧠 Barrier Intelligence")
 
-    barrier_summary = attendance_visits["barrier"].value_counts().reset_index()
+    barrier_summary = notes["barrier"].value_counts().reset_index()
     barrier_summary.columns = ["Barrier", "Count"]
 
     col1, col2 = st.columns(2)
@@ -236,9 +239,9 @@ if att_file and note_file:
         "Other": 0.3
     }
 
-    attendance_visits["impact"] = attendance_visits["barrier"].map(weights)
+    notes["impact"] = notes["barrier"].map(weights)
 
-    student_risk = attendance_visits.groupby(["student_id", "student_name"]).agg(
+    student_risk = notes.groupby(["student_id", "student_name"]).agg(
         barrier_count=("barrier", "count"),
         avg_impact=("impact", "mean")
     ).reset_index()
@@ -246,10 +249,7 @@ if att_file and note_file:
     student_risk["avg_impact"] = student_risk["avg_impact"].fillna(0)
 
     max_count = student_risk["barrier_count"].max()
-
-    student_risk["barrier_norm"] = (
-        student_risk["barrier_count"] / max_count if max_count > 0 else 0
-    )
+    student_risk["barrier_norm"] = student_risk["barrier_count"] / max_count if max_count > 0 else 0
 
     student_risk["risk_score"] = (
         student_risk["barrier_norm"] * 40 +
@@ -269,9 +269,6 @@ if att_file and note_file:
 
     student_risk = student_risk.sort_values("risk_score", ascending=False)
 
-    # =========================================================
-    # VISUALS
-    # =========================================================
     col1, col2 = st.columns(2)
 
     with col1:
@@ -285,15 +282,15 @@ if att_file and note_file:
     # =========================================================
     st.header("🧍 Student Drilldown")
 
-    students = student_risk["student_id"].unique()
+    students = sorted(student_risk["student_id"].unique())
 
-    student = st.selectbox("Select Student ID", students)
+    student = st.selectbox("Select Student", students)
 
     student_name = student_risk[
         student_risk["student_id"] == student
     ]["student_name"].iloc[0]
 
-    st.subheader(f"Student: {student_name} ({student})")
+    st.subheader(f"{student_name} ({student})")
 
     col1, col2 = st.columns(2)
 
@@ -304,8 +301,8 @@ if att_file and note_file:
     with col2:
         st.subheader("Notes")
         st.dataframe(
-            safe_df(attendance_visits[attendance_visits["student_id"] == student])
+            safe_df(notes[notes["student_id"] == student])
         )
 
 else:
-    st.info("Upload both Attendance and Notes files to begin.")
+    st.info("Upload both files to begin.")
