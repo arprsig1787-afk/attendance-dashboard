@@ -10,7 +10,7 @@ import re
 st.set_page_config(page_title="Attendance Intelligence System", layout="wide")
 
 st.title("📊 Attendance Intelligence System")
-st.markdown("Barrier Intelligence • Risk Scoring • Attendance Analytics")
+st.markdown("Barrier Intelligence • Risk Scoring • Student Insights")
 
 
 # =========================================================
@@ -47,7 +47,7 @@ def extract_id(val):
 
 
 # =========================================================
-# 🧠 SMART HEADER DETECTION (CRITICAL FIX)
+# HEADER DETECTION (FIXES EXCEL EXPORT ISSUES)
 # =========================================================
 def find_header_row(df):
     for i in range(min(15, len(df))):
@@ -60,7 +60,7 @@ def find_header_row(df):
 
 
 # =========================================================
-# 🧠 AUTO COLUMN DETECTION (NOT NAME-BASED)
+# COLUMN DETECTION (ROBUST)
 # =========================================================
 def detect_column(df, keywords):
     best_col = None
@@ -68,7 +68,6 @@ def detect_column(df, keywords):
 
     for col in df.columns:
         s = df[col].astype(str).str.lower()
-
         score = sum(s.str.contains(k, na=False).mean() for k in keywords)
 
         if score > best_score:
@@ -79,17 +78,17 @@ def detect_column(df, keywords):
 
 
 # =========================================================
-# UPLOAD SECTION
+# UI UPLOAD
 # =========================================================
 st.header("📂 Upload Data")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    att_file = st.file_uploader("Attendance Excel", type=["xlsx"])
+    att_file = st.file_uploader("Attendance File", type=["xlsx"])
 
 with col2:
-    note_file = st.file_uploader("Notes Excel", type=["xlsx"])
+    note_file = st.file_uploader("Notes File", type=["xlsx"])
 
 
 # =========================================================
@@ -103,9 +102,6 @@ if att_file and note_file:
     raw_att = pd.read_excel(att_file, header=None)
     raw_notes = pd.read_excel(note_file, header=None)
 
-    # -------------------------
-    # FIND HEADERS
-    # -------------------------
     att_header = find_header_row(raw_att)
     note_header = find_header_row(raw_notes)
 
@@ -118,52 +114,48 @@ if att_file and note_file:
     attendance = attendance.fillna("")
     notes = notes.fillna("")
 
-    st.success(f"Attendance header row detected at: {att_header}")
-    st.success(f"Notes header row detected at: {note_header}")
+    st.success(f"Attendance header row: {att_header}")
+    st.success(f"Notes header row: {note_header}")
 
     # =========================================================
-    # AUTO DETECT ID COLUMN
+    # AUTO DETECT ID COLUMNS
     # =========================================================
     att_id_col = detect_column(attendance, ["student", "name", "id"])
     note_id_col = detect_column(notes, ["student", "name", "id"])
 
-    if not att_id_col or not note_id_col:
-        st.error("Could not detect student ID columns")
-        st.stop()
-
     attendance["student_id"] = attendance[att_id_col].apply(extract_id)
     notes["student_id"] = notes[note_id_col].apply(extract_id)
 
+    # REMOVE EMPTY IDS (CRITICAL FIX)
+    attendance = attendance[attendance["student_id"] != ""]
+    notes = notes[notes["student_id"] != ""]
+
+    st.success(f"Attendance ID Column: {att_id_col}")
+    st.success(f"Notes ID Column: {note_id_col}")
+
     # =========================================================
-    # AUTO DETECT NOTES COLUMN
+    # AUTO DETECT NOTES + VISIT COLUMNS
     # =========================================================
     note_col = detect_column(notes, ["note", "comment", "visit", "description"])
-
-    if not note_col:
-        st.error(f"No notes column found. Columns: {list(notes.columns)}")
-        st.stop()
-
-    # =========================================================
-    # AUTO DETECT VISIT COLUMN
-    # =========================================================
     visit_col = detect_column(notes, ["visit", "type", "description"])
 
-    if not visit_col:
-        st.error("No visit column found")
+    if not note_col or not visit_col:
+        st.error("Could not detect required columns")
         st.stop()
 
     # =========================================================
-    # FILTER ATTENDANCE RECORDS
+    # IMPORTANT FIX: DO NOT OVER-FILTER DATA
     # =========================================================
-    attendance_visits = notes[
-        notes[visit_col].astype(str).str.lower().str.contains("attendance", na=False)
-    ].copy()
+    attendance_visits = notes.copy()
 
-    st.subheader("Attendance Visit Volume")
-    st.write(len(attendance_visits))
+    # optional filter but SAFE (does NOT collapse dataset)
+    if visit_col in notes.columns:
+        attendance_visits = attendance_visits[
+            attendance_visits[visit_col].astype(str).str.lower().notna()
+        ]
 
     # =========================================================
-    # 🧠 BARRIER ENGINE
+    # BARRIER ENGINE
     # =========================================================
     def classify(note):
         n = str(note).lower()
@@ -198,16 +190,13 @@ if att_file and note_file:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.plotly_chart(
-            px.bar(barrier_summary, x="Barrier", y="Count"),
-            use_container_width=True
-        )
+        st.plotly_chart(px.bar(barrier_summary, x="Barrier", y="Count"), use_container_width=True)
 
     with col2:
         st.dataframe(barrier_summary)
 
     # =========================================================
-    # 🔥 RISK ENGINE
+    # RISK ENGINE
     # =========================================================
     st.header("🔥 Predictive Risk Engine")
 
@@ -254,25 +243,24 @@ if att_file and note_file:
     student_risk = student_risk.sort_values("risk_score", ascending=False)
 
     # =========================================================
-    # VISUAL FLOW
+    # VISUALS
     # =========================================================
     col1, col2 = st.columns(2)
 
     with col1:
-        st.plotly_chart(
-            px.histogram(student_risk, x="risk_score"),
-            use_container_width=True
-        )
+        st.plotly_chart(px.histogram(student_risk, x="risk_score"), use_container_width=True)
 
     with col2:
         st.dataframe(student_risk)
 
     # =========================================================
-    # STUDENT DRILLDOWN
+    # STUDENT DRILLDOWN (FIXED)
     # =========================================================
     st.header("🧍 Student Drilldown")
 
-    student = st.selectbox("Select Student", student_risk["student_id"].unique())
+    students = sorted(student_risk["student_id"].dropna().unique())
+
+    student = st.selectbox("Select Student", students)
 
     col1, col2 = st.columns(2)
 
@@ -281,7 +269,7 @@ if att_file and note_file:
         st.dataframe(student_risk[student_risk["student_id"] == student])
 
     with col2:
-        st.subheader("Attendance Notes")
+        st.subheader("All Notes")
         st.dataframe(
             safe_df(attendance_visits[attendance_visits["student_id"] == student])
         )
