@@ -1,0 +1,133 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from sklearn.linear_model import LinearRegression
+
+st.set_page_config(page_title="Attendance Journey System", layout="wide")
+
+st.title("📊 Attendance Journey Intelligence System")
+
+# -----------------------------
+# UPLOAD DATA
+# -----------------------------
+attendance_file = st.file_uploader("Upload Attendance Excel", type=["xlsx"])
+barrier_file = st.file_uploader("Upload Barrier Excel", type=["xlsx"])
+intervention_file = st.file_uploader("Upload Intervention Excel", type=["xlsx"])
+
+if attendance_file and barrier_file and intervention_file:
+
+    attendance = pd.read_excel(attendance_file)
+    barriers = pd.read_excel(barrier_file)
+    interventions = pd.read_excel(intervention_file)
+
+    # clean columns
+    attendance.columns = attendance.columns.str.lower().str.strip()
+    barriers.columns = barriers.columns.str.lower().str.strip()
+    interventions.columns = interventions.columns.str.lower().str.strip()
+
+    st.subheader("Raw Data Preview")
+    st.write(attendance.head())
+
+    # -----------------------------
+    # BUILD BUILDING TREND
+    # -----------------------------
+    st.header("📈 Attendance Trend")
+
+    trend = attendance.groupby("week")["attendance_pct"].mean().reset_index()
+    trend["week_num"] = np.arange(len(trend))
+
+    fig = px.line(trend, x="week", y="attendance_pct",
+                  title="Average Attendance Over Time")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------
+    # FORECASTING
+    # -----------------------------
+    model = LinearRegression()
+    model.fit(trend[["week_num"]], trend["attendance_pct"])
+
+    future = np.arange(len(trend) + 4).reshape(-1, 1)
+    forecast = model.predict(future)
+
+    forecast_df = pd.DataFrame({
+        "Week": list(range(len(forecast))),
+        "Forecasted Attendance": forecast
+    })
+
+    fig2 = px.line(forecast_df, x="Week", y="Forecasted Attendance",
+                   title="Attendance Forecast (Next 4 Weeks)")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # -----------------------------
+    # BARRIERS
+    # -----------------------------
+    st.header("🚧 Barrier Analysis")
+
+    barrier_counts = barriers["barrier_type"].value_counts().reset_index()
+    barrier_counts.columns = ["Barrier", "Count"]
+
+    fig3 = px.bar(barrier_counts, x="Barrier", y="Count",
+                  title="Barrier Frequency")
+    st.plotly_chart(fig3, use_container_width=True)
+
+    # -----------------------------
+    # EXECUTIVE INSIGHTS
+    # -----------------------------
+    st.header("🧠 Executive Insights")
+
+    top_barrier = barrier_counts.iloc[0]["Barrier"]
+
+    avg_start = attendance.groupby("week")["attendance_pct"].mean().iloc[0]
+    avg_end = attendance.groupby("week")["attendance_pct"].mean().iloc[-1]
+    change = avg_end - avg_start
+
+    st.write(f"""
+    - Primary barrier: {top_barrier}
+    - Attendance change over period: {change:.2f}%
+    - System trend indicates {'improvement' if change > 0 else 'decline'} in engagement
+    """)
+
+    # -----------------------------
+    # STUDENT JOURNEY VIEW
+    # -----------------------------
+    st.header("🧍 Student Journey View")
+
+    student_id = st.selectbox("Select Student", attendance["student_id"].unique())
+
+    student_att = attendance[attendance["student_id"] == student_id]
+    student_bar = barriers[barriers["student_id"] == student_id]
+    student_int = interventions[interventions["student_id"] == student_id]
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.subheader("Attendance Journey")
+        st.dataframe(student_att.sort_values("week"))
+
+    with col2:
+        st.subheader("Barriers Identified")
+        st.dataframe(student_bar)
+
+    with col3:
+        st.subheader("Interventions")
+        st.dataframe(student_int)
+
+    # -----------------------------
+    # RISK SCORE
+    # -----------------------------
+    st.header("⚠️ Risk Overview")
+
+    attendance["risk_score"] = 100 - attendance["attendance_pct"]
+
+    risk = attendance.groupby("student_id")["risk_score"].mean().reset_index()
+    risk = risk.sort_values("risk_score", ascending=False)
+
+    fig4 = px.bar(risk.head(10),
+                  x="student_id",
+                  y="risk_score",
+                  title="Top 10 At-Risk Students")
+    st.plotly_chart(fig4, use_container_width=True)
+
+else:
+    st.info("Upload all three files: Attendance, Barriers, Interventions")
