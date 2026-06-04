@@ -6,7 +6,8 @@ import numpy as np
 import re
 
 st.set_page_config(page_title="Attendance Intelligence Dashboard", layout="wide")
-st.title("📊 Attendance Intelligence Dashboard (Self-Healing SIS Version)")
+st.title("📊 Attendance Intelligence Dashboard (Self-Healing SIS Engine)")
+
 
 # ----------------------------
 # FILE UPLOAD
@@ -16,7 +17,7 @@ notes_file = st.file_uploader("Upload Notes Excel", type=["xlsx"])
 
 
 # ----------------------------
-# CLEAN COLUMNS (FIX DUPLICATES + SPACES)
+# CLEAN COLUMNS (FIX DUPLICATES)
 # ----------------------------
 def clean_columns(df):
     df.columns = df.columns.astype(str).str.strip().str.lower()
@@ -37,7 +38,7 @@ def clean_columns(df):
 
 
 # ----------------------------
-# EXTRACT ID FROM MESSY STRINGS
+# EXTRACT STUDENT ID FROM TEXT
 # ----------------------------
 def extract_id(text):
     if pd.isna(text):
@@ -47,7 +48,28 @@ def extract_id(text):
 
 
 # ----------------------------
-# SIMPLE NLP BARRIER DETECTION
+# AUTO HEADER DETECTION (KEY FIX FOR YOUR ERROR)
+# ----------------------------
+def fix_headers(df):
+    """
+    Finds real header row in messy Excel exports
+    like 'Student Visits Report'
+    """
+
+    for i in range(min(15, len(df))):
+        row = df.iloc[i].astype(str).str.lower()
+
+        # detect likely header row
+        if any("student" in x for x in row) or any("note" in x for x in row):
+            df.columns = df.iloc[i]
+            df = df[i + 1:]
+            return df.reset_index(drop=True)
+
+    return df
+
+
+# ----------------------------
+# BARRIER DETECTION (RULE-BASED NLP)
 # ----------------------------
 def detect_barrier(text):
     text = str(text).lower()
@@ -75,67 +97,74 @@ def detect_barrier(text):
 # ----------------------------
 if attendance_file and notes_file:
 
-    # LOAD
-    attendance = pd.read_excel(attendance_file)
-    notes = pd.read_excel(notes_file)
+    # LOAD RAW (NO HEADERS FIRST)
+    attendance = pd.read_excel(attendance_file, header=None)
+    notes = pd.read_excel(notes_file, header=None)
+
+    # FIX HEADER ROWS (CRITICAL FOR YOUR ERROR)
+    attendance = fix_headers(attendance)
+    notes = fix_headers(notes)
 
     # CLEAN
     attendance = clean_columns(attendance)
     notes = clean_columns(notes)
 
-    st.subheader("Raw Data Preview")
+    st.subheader("Cleaned Data Preview")
     st.dataframe(attendance.head())
     st.dataframe(notes.head())
 
     # ----------------------------
-    # AUTO-DETECT STUDENT ID (ATTENDANCE)
+    # AUTO DETECT STUDENT ID (ATTENDANCE)
     # ----------------------------
-    id_cols_att = [c for c in attendance.columns if "name" in c or "student" in c or "id" in c]
+    id_cols_att = [c for c in attendance.columns if "student" in str(c).lower() or "name" in str(c).lower() or "id" in str(c).lower()]
 
     if len(id_cols_att) == 0:
-        st.error("No student identifier column found in attendance file.")
+        st.error("Could not detect student column in attendance file.")
         st.stop()
 
     att_id_col = id_cols_att[0]
     attendance["student_id"] = attendance[att_id_col].apply(extract_id)
 
     # ----------------------------
-    # AUTO-DETECT STUDENT ID (NOTES)
+    # AUTO DETECT STUDENT ID (NOTES)
     # ----------------------------
-    id_cols_notes = [c for c in notes.columns if "name" in c or "student" in c or "id" in c]
+    id_cols_notes = [c for c in notes.columns if "student" in str(c).lower() or "name" in str(c).lower() or "id" in str(c).lower()]
 
     if len(id_cols_notes) == 0:
-        st.error("No student identifier column found in notes file.")
+        st.error("Could not detect student column in notes file.")
         st.stop()
 
     notes["student_id"] = notes[id_cols_notes[0]].apply(extract_id)
 
     # ----------------------------
-    # FIND NOTES COLUMN FLEXIBLY (FIX FOR "Y1 Notes")
+    # FIND NOTES COLUMN (FIX FOR "Y1 Notes")
     # ----------------------------
-    notes_candidates = [c for c in notes.columns if "note" in c]
+    notes_cols = [c for c in notes.columns if "note" in str(c).lower()]
 
-    if len(notes_candidates) == 0:
-        st.error(f"No Notes column found. Available columns: {notes.columns.tolist()}")
+    if len(notes_cols) == 0:
+        st.error("No Notes column found after header fix.")
+        st.write("Detected columns:", notes.columns.tolist())
         st.stop()
 
-    notes_col = notes_candidates[0]
+    notes_col = notes_cols[0]
     notes["notes_text"] = notes[notes_col].astype(str)
 
     # ----------------------------
-    # DETECT ATTENDANCE STRUCTURE (WIDE OR LONG)
+    # ATTENDANCE STRUCTURE DETECTION
     # ----------------------------
-    week_cols = [c for c in attendance.columns if "wk" in c or "week" in c]
+    week_cols = [c for c in attendance.columns if "wk" in str(c).lower() or "week" in str(c).lower()]
 
     if len(week_cols) > 0:
+
         attendance = attendance.melt(
             id_vars=[att_id_col, "student_id"],
             value_vars=week_cols,
             var_name="week",
             value_name="attendance_pct"
         )
+
     else:
-        pct_cols = [c for c in attendance.columns if "%" in c or "att" in c]
+        pct_cols = [c for c in attendance.columns if "%" in str(c) or "att" in str(c).lower()]
 
         if len(pct_cols) == 0:
             st.error("Could not detect attendance percentage column.")
@@ -216,8 +245,8 @@ if attendance_file and notes_file:
     st.write(f"""
     - Primary inferred barrier: **{top_barrier}**
     - Attendance change: **{change:.2f}%**
-    - System adapts to messy SIS exports (Y1 Notes supported)
-    - Notes are automatically categorized into intervention groups
+    - System auto-recovers messy SIS exports (including Student Visits Report format)
+    - Notes are converted into structured categories
     """)
 
     # ----------------------------
